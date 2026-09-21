@@ -20,7 +20,7 @@ CREATE TABLE users(
 CREATE TABLE wallets(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    balance_millimes BIGINT DEFAULT 0 CHECK (balance_milimes >= 0),
+    balance_millimes BIGINT DEFAULT 0 CHECK (balance_millimes >= 0),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 
