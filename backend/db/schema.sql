@@ -15,14 +15,14 @@ CREATE TABLE users(
     role VARCHAR(20) DEFAULT 'gamer' CHECK(role IN ('gamer', 'admin')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'ACTIVE' CHECK (status in ('ACTIVE', 'BANNED', 'DEACTIVATED'))
-)
+);
 
 CREATE TABLE wallets(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     balance_millimes BIGINT DEFAULT 0 CHECK (balance_millimes >= 0),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
+);
 
 CREATE TABLE stations(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
