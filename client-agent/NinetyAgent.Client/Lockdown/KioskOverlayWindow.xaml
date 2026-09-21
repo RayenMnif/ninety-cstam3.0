@@ -1,0 +1,93 @@
+<Window x:Class="NinetyAgent.Client.Lockdown.KioskOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ninety Gaming House"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="True"
+        Topmost="True"
+        WindowState="Maximized"
+        WindowStartupLocation="Manual"
+        Width="1920"
+        Height="1080"
+        Background="#0A0A0F"
+        Cursor="Arrow"
+        Loaded="OnLoaded">
+
+    <!--
+        Design notes:
+        - No border/chrome/taskbar entry: this window IS the desktop while locked, there is
+          nothing "behind" it a user should be able to perceive or reach.
+        - Cursor="None" on the LOCKED_IDLE / DISCONNECTED_LOCK view: the venue is paying for
+          gaming rigs, not for a gamer to fidget with a mouse cursor on a paywall screen.
+          The ACTIVE_SESSION view (this window hidden entirely) restores the normal cursor.
+        - Everything below is vector/text — zero bitmap assets — which keeps the compiled BAML
+          payload tiny and avoids any decode/GC churn on a timer tick, matching the "Zero UI
+          Repainting" resource strategy: only the TextBlocks bound to the countdown actually
+          repaint each second; the rest of the visual tree is static.
+    -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Center content -->
+        <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+
+            <TextBlock Text="NINETY GAMING HOUSE"
+                       Foreground="#4D8AFF"
+                       FontSize="22"
+                       FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,40" />
+
+            <!-- Status message: "STATION LOCKED", "SESSION PAUSED", "RECONNECTING TO SERVER..." -->
+            <TextBlock x:Name="StatusMessageText"
+                       Text="STATION LOCKED"
+                       Foreground="#EDEDED"
+                       FontSize="34"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,24" />
+
+            <!-- Countdown timer, hh:mm:ss — hidden (collapsed) outside an active/paused session -->
+            <TextBlock x:Name="SessionTimerText"
+                       Text="00:00:00"
+                       Foreground="#FFFFFF"
+                       FontSize="72"
+                       FontWeight="Light"
+                       FontFamily="Consolas"
+                       HorizontalAlignment="Center"
+                       Visibility="Collapsed"
+                       Margin="0,0,0,16" />
+
+            <!-- Wallet balance -->
+            <TextBlock x:Name="BalanceText"
+                       Text="Balance: -- TND"
+                       Foreground="#9AA4B2"
+                       FontSize="18"
+                       HorizontalAlignment="Center"
+                       Margin="0,0,0,32" />
+
+            <Border Background="#161B22"
+                    CornerRadius="8"
+                    Padding="20,12"
+                    BorderBrush="#2A3140"
+                    BorderThickness="1">
+                <TextBlock x:Name="HintText"
+                           Text="See venue staff to start or extend your session."
+                           Foreground="#6B7280"
+                           FontSize="14"
+                           HorizontalAlignment="Center" />
+            </Border>
+        </StackPanel>
+
+        <!-- Bottom-right connection indicator, small and unobtrusive per the Phase 3 "unobtrusive" requirement -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="24">
+            <Ellipse x:Name="ConnectionDot" Width="8" Height="8" Fill="#3FB950" Margin="0,0,8,0" />
+            <TextBlock x:Name="ConnectionStatusText" Text="Connected" Foreground="#6B7280" FontSize="12" />
+        </StackPanel>
+    </Grid>
+</Window>
