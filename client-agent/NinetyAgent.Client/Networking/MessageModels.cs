@@ -8,6 +8,9 @@ public static class MessageType
     public const string SessionCommand = "SESSION_COMMAND"; 
     public const string StationRegister = "STATION_REGISTER";
     public const string Ack = "ACK";
+    public const string AuthLogin = "AUTH_LOGIN";
+    public const string AuthRegister = "AUTH_REGISTER";
+    public const string AuthResponse = "AUTH_RESPONSE";
 }
 
 public class AgentEnvelopeHeader

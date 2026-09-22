@@ -1,41 +1,36 @@
 using Microsoft.Win32;
 using NinetyAgent.Client.Core;
 using NinetyAgent.Client.Interop;
-using NinetyAgent.Client.Networking;
-using System.Windows;
-using System.Collections.ObjectModel;
-using System.IO;
 using System;
-
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Windows;
+using System.Windows.Media; // Required for WPF MediaPlayer audio engine
+using System.Windows.Threading;
 namespace NinetyAgent.Client.Lockdown;
 
 public sealed record MonitorBounds(int Left, int Top, int Width, int Height, bool IsPrimary);
 
-/// <summary>
-/// The single entry point for "lock this station down" / "release it". Coordinates three
-/// independent defense layers so no one of them being individually bypassable breaks the whole
-/// system:
-///   1. <see cref="LowLevelKeyboardHook"/>  — suppresses Win key / Alt+Tab / Alt+Esc / Ctrl+Esc.
-///   2. HKCU policy keys                    — disables Task Manager via the same registry values
-///                                             Group Policy itself would set (DisableTaskMgr),
-///                                             so a killed/relaunched Explorer still honors it.
-///   3. Per-monitor topmost overlay windows — even if 1 and 2 were somehow both defeated, there
-///      is a covering, always-on-top window sized to every physical monitor, so there is no
-///      underlying desktop pixel a bypass could click on to begin with.
-/// A foreground-window watchdog timer re-asserts topmost + focus a few times a second, because
-/// certain UAC-elevated or protected system dialogs (e.g. AV prompts) can legitimately steal
-/// foreground even from a topmost window — we detect that and immediately reclaim it.
-/// </summary>
 public sealed class SystemLockdownManager : IDisposable
 {
     private readonly ILogSink _log;
     private readonly LowLevelKeyboardHook _keyboardHook;
-    private System.Windows.Threading.DispatcherTimer? _foregroundWatchdog;
+
     private readonly List<nint> _overlayHandles = new();
     private readonly List<Window> _overlayWindows = new();
-    private bool _taskManagerWasDisabledByUs;
 
-    public event Action<string>? BypassAttemptBlocked; // forwarded from the keyboard hook, for SECURITY_ALERT
+    private Thread? _watchdogThread;
+    private CancellationTokenSource? _watchdogCts;
+    private nint _winEventHook = nint.Zero;
+    private NativeMethods.WinEventDelegate? _winEventDelegate;
+
+    private MediaPlayer? _mediaPlayer; // Lecteur audio
+    private bool _policiesAppliedByUs;
+    private bool _isLocked;
+
+    public event Action<string>? BypassAttemptBlocked;
 
     public SystemLockdownManager(ILogSink log)
     {
@@ -44,192 +39,362 @@ public sealed class SystemLockdownManager : IDisposable
         _keyboardHook.BypassAttemptBlocked += desc => BypassAttemptBlocked?.Invoke(desc);
     }
 
-    private static void WriteUiDebugLog(string message)
-    {
-        try
-        {
-            var logDir = @"C:\ProgramData\NinetyAgent\logs";
-            Directory.CreateDirectory(logDir);
-            var logFile = Path.Combine(logDir, "ui_debug.log");
-            File.AppendAllText(logFile, $"{DateTime.Now:O} {message}{Environment.NewLine}");
-        }
-        catch { }
-    }
-
-    /// <summary>Call once at agent startup — the hook stays installed for the process lifetime; SuppressionEnabled toggles the actual blocking.</summary>
     public void Initialize()
     {
         _keyboardHook.Install();
     }
 
-    // ------------------------------------------------------------------
-    // Lock / Unlock
-    // ------------------------------------------------------------------
-
     public void EngageLock()
     {
-        _keyboardHook.SuppressionEnabled = true;
-        DisableTaskManager();
-        _log.Info("[Lockdown] Station locked: shortcuts suppressed, Task Manager disabled.");
-        WriteUiDebugLog("[Lockdown] EngageLock invoked");
+        if (_isLocked) return;
+        _isLocked = true;
 
-        // Create per-monitor overlay windows on the WPF UI thread so the user cannot interact
-        // with the desktop. Do this defensively via the Application dispatcher in case EngageLock
-        // is called from a non-UI thread (our bootstrap often runs on threadpool threads).
+        _keyboardHook.SuppressionEnabled = true;
+        ApplySecurityPolicies();
+        DisableStickyKeys();
+
+        // 1. Démarrer la sonnerie / alerte audio
+        StartLockAudio();
+
+        // Abonnement aux changements d'affichage (multi-écrans)
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
+        _log.Info("[Lockdown] Station locked with audio alert, policy hooks, and multi-monitor support.");
+
         try
         {
-            if (Application.Current is null)
-            {
-                _log.Error("[Lockdown] Application.Current is null; cannot create overlay windows.");
-                WriteUiDebugLog("[Lockdown] Application.Current is null; cannot create overlay windows.");
-                return;
-            }
-
-            // Dispatch to UI thread with explicit priority to ensure windows render
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                try
-                {
-                    var monitors = EnumerateMonitors();
-                    _log.Info($"[Lockdown] Enumerating {monitors.Count} monitors for overlay creation.");
-                    WriteUiDebugLog($"[Lockdown] Enumerating {monitors.Count} monitors for overlay creation.");
-
-                    if (monitors.Count == 0)
-                    {
-                        _log.Warn("[Lockdown] No monitors detected; overlay windows not created.");
-                        WriteUiDebugLog("[Lockdown] No monitors detected; overlay windows not created.");
-                        return;
-                    }
-
-                    foreach (var m in monitors)
-                    {
-                        try
-                        {
-                            _log.Info($"[Lockdown] Creating overlay for monitor: bounds=({m.Left},{m.Top}) size=({m.Width}x{m.Height}) primary={m.IsPrimary}");
-                            WriteUiDebugLog($"[Lockdown] Creating overlay for monitor: bounds=({m.Left},{m.Top}) size=({m.Width}x{m.Height}) primary={m.IsPrimary}");
-
-                            var win = new KioskOverlayWindow(m, m.IsPrimary);
-                            win.Show();
-                            win.Activate(); // Bring window to foreground
-                            win.Topmost = true; // Re-assert topmost in case Show() didn't stick
-
-                            _overlayWindows.Add(win);
-                            RegisterOverlayHandle(win.Handle);
-
-                            _log.Info($"[Lockdown] Overlay created and shown successfully.");
-                            WriteUiDebugLog($"[Lockdown] Overlay created for monitor handle={win.Handle}");
-                        }
-                        catch (Exception exWindow)
-                        {
-                            _log.Error($"[Lockdown] Failed to create overlay for monitor ({m.Left},{m.Top}).", exWindow);
-                            WriteUiDebugLog($"[Lockdown] Failed to create overlay for monitor ({m.Left},{m.Top}): {exWindow}");
-                        }
-                    }
-
-                    _log.Info($"[Lockdown] {_overlayWindows.Count} overlay windows created.");
-                    WriteUiDebugLog($"[Lockdown] {_overlayWindows.Count} overlay windows created.");
-                }
-                catch (Exception ex)
-                {
-                    _log.Error("[Lockdown] Failed to create overlay windows during dispatcher call.", ex);
-                    WriteUiDebugLog($"[Lockdown] Failed to create overlay windows during dispatcher call: {ex}");
-                }
-            }, System.Windows.Threading.DispatcherPriority.Send); // Use Send priority for immediate execution
+            RefreshOverlaysOnUIThread();
+            StartWinEventHook();
+            StartHighPriorityWatchdog();
         }
         catch (Exception ex)
         {
-            _log.Error("[Lockdown] Could not dispatch overlay creation to UI thread.", ex);
+            _log.Error("[Lockdown] Error during EngageLock execution.", ex);
         }
     }
 
     public void ReleaseLock()
     {
-        _keyboardHook.SuppressionEnabled = false;
-        RestoreTaskManager();
-        _log.Info("[Lockdown] Station unlocked: shortcuts and Task Manager restored.");
+        if (!_isLocked) return;
+        _isLocked = false;
 
-        // Close overlay windows on UI thread
-        try
-        {
-            Application.Current?.Dispatcher.Invoke(() =>
-            {
-                foreach (var w in _overlayWindows)
-                {
-                    try { w.Close(); } catch { }
-                }
-                _overlayWindows.Clear();
-                _overlayHandles.Clear();
-            });
-        }
-        catch (Exception ex)
-        {
-            _log.Error("[Lockdown] Could not dispatch overlay teardown to UI thread.", ex);
-        }
+        _keyboardHook.SuppressionEnabled = false;
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+
+        // 2. Stopper la lecture audio
+        StopLockAudio();
+
+        StopWinEventHook();
+        StopHighPriorityWatchdog();
+        RestoreSecurityPolicies();
+
+        CloseAllOverlays();
     }
 
     // ------------------------------------------------------------------
-    // Task Manager policy (HKCU — matches what Group Policy itself writes,
-    // so it survives an Explorer.exe restart and needs no admin rights)
+    // Audio Management Methods
     // ------------------------------------------------------------------
 
-    private const string PoliciesSystemKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
-    private const string DisableTaskMgrValueName = "DisableTaskMgr";
+    // Replace: private SoundPlayer? _audioPlayer;
 
-    private void DisableTaskManager()
+    private void StartLockAudio()
     {
         try
         {
-            using var key = Registry.CurrentUser.CreateSubKey(PoliciesSystemKeyPath, writable: true);
-            var existing = key.GetValue(DisableTaskMgrValueName);
-            if (existing is null or 0)
+            string audioPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "lock_alarm.wav");
+
+            if (File.Exists(audioPath))
             {
-                key.SetValue(DisableTaskMgrValueName, 1, RegistryValueKind.DWord);
-                _taskManagerWasDisabledByUs = true;
+                // Ensure UI Thread execution for WPF MediaPlayer
+                Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    _mediaPlayer = new System.Windows.Media.MediaPlayer();
+                    _mediaPlayer.Open(new Uri(audioPath));
+
+                    // Loop playback automatically when finished
+                    _mediaPlayer.MediaEnded += (s, e) =>
+                    {
+                        _mediaPlayer.Position = TimeSpan.Zero;
+                        _mediaPlayer.Play();
+                    };
+
+                    _mediaPlayer.Play();
+                });
+
+                _log.Info($"[Lockdown] Audio alert started from {audioPath}");
+            }
+            else
+            {
+                System.Media.SystemSounds.Exclamation.Play();
+                _log.Warn($"[Lockdown] Audio file not found at {audioPath}. Played default system sound.");
             }
         }
         catch (Exception ex)
         {
-            // Non-fatal: the keyboard hook + overlay windows are the primary defenses; the
-            // registry policy is defense-in-depth. Log and continue rather than crash the agent.
-            _log.Error("[Lockdown] Could not write DisableTaskMgr policy (non-fatal).", ex);
+            _log.Error("[Lockdown] Failed to start lock audio playback.", ex);
         }
     }
 
-    private void RestoreTaskManager()
+    private void StopLockAudio()
     {
-        if (!_taskManagerWasDisabledByUs) return; // don't clobber a policy an admin set on purpose
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(PoliciesSystemKeyPath, writable: true);
-            key?.DeleteValue(DisableTaskMgrValueName, throwOnMissingValue: false);
-            _taskManagerWasDisabledByUs = false;
+            if (_mediaPlayer != null)
+            {
+                Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    _mediaPlayer.Stop();
+                    _mediaPlayer.Close();
+                    _mediaPlayer = null;
+                });
+                _log.Info("[Lockdown] Audio alert stopped.");
+            }
         }
         catch (Exception ex)
         {
-            _log.Error("[Lockdown] Could not clear DisableTaskMgr policy (non-fatal).", ex);
+            _log.Error("[Lockdown] Error stopping audio playback.", ex);
         }
     }
 
-    // ------------------------------------------------------------------
-    // Multi-monitor enumeration
-    // ------------------------------------------------------------------
+    private async void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (!_isLocked) return;
+        _log.Info("[Lockdown] Display settings changed. Refreshing overlays...");
+        await System.Threading.Tasks.Task.Delay(500);
+        RefreshOverlaysOnUIThread();
+    }
 
-    /// <summary>
-    /// Enumerates every physical display via EnumDisplayMonitors rather than relying on WPF's
-    /// SystemParameters.VirtualScreen* bounding box. The bounding box is wrong (leaves live
-    /// desktop gaps clickable) whenever monitors are arranged non-contiguously or with mixed
-    /// resolutions/DPI, which is common on multi-rig gaming stations built up over time with
-    /// mismatched hardware. One overlay window is created per entry this returns.
-    /// </summary>
+    private void RefreshOverlaysOnUIThread()
+    {
+        if (Application.Current is null) return;
+
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            CloseAllOverlaysUIThread();
+
+            var monitors = EnumerateMonitors();
+            foreach (var m in monitors)
+            {
+                try
+                {
+                    var win = new KioskOverlayWindow(m, m.IsPrimary);
+                    win.Show();
+                    win.Activate();
+                    win.Topmost = true;
+
+                    _overlayWindows.Add(win);
+                    RegisterOverlayHandle(win.Handle);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error($"[Lockdown] Failed to create overlay window.", ex);
+                }
+            }
+
+            ForceForegroundOverlay();
+        }, DispatcherPriority.Send);
+    }
+
+    private void CloseAllOverlays()
+    {
+        try
+        {
+            Application.Current?.Dispatcher.Invoke(CloseAllOverlaysUIThread);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("[Lockdown] Error during overlay cleanup.", ex);
+        }
+    }
+
+    private void CloseAllOverlaysUIThread()
+    {
+        foreach (var w in _overlayWindows)
+        {
+            try { w.Close(); } catch { }
+        }
+        _overlayWindows.Clear();
+        _overlayHandles.Clear();
+    }
+
+    public void RegisterOverlayHandle(nint hwnd)
+    {
+        if (!_overlayHandles.Contains(hwnd))
+        {
+            _overlayHandles.Add(hwnd);
+        }
+    }
+
+    private void StartWinEventHook()
+    {
+        _winEventDelegate = WinEventProc;
+        _winEventHook = NativeMethods.SetWinEventHook(
+            NativeMethods.EVENT_SYSTEM_FOREGROUND,
+            NativeMethods.EVENT_SYSTEM_FOREGROUND,
+            nint.Zero,
+            _winEventDelegate,
+            0, 0,
+            NativeMethods.WINEVENT_OUTOFCONTEXT);
+    }
+
+    private void StopWinEventHook()
+    {
+        if (_winEventHook != nint.Zero)
+        {
+            NativeMethods.UnhookWinEvent(_winEventHook);
+            _winEventHook = nint.Zero;
+        }
+    }
+
+    private void WinEventProc(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+    {
+        if (!_isLocked) return;
+        if (!_overlayHandles.Contains(hwnd))
+        {
+            ForceForegroundOverlay();
+        }
+    }
+
+    private void StartHighPriorityWatchdog()
+    {
+        _watchdogCts = new CancellationTokenSource();
+        var token = _watchdogCts.Token;
+
+        _watchdogThread = new Thread(() =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_isLocked)
+                    {
+                        var fg = NativeMethods.GetForegroundWindow();
+                        if (!_overlayHandles.Contains(fg))
+                        {
+                            ForceForegroundOverlay();
+                        }
+                    }
+                }
+                catch { }
+
+                Thread.Sleep(30);
+            }
+        })
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.Highest,
+            Name = "KioskLockdownWatchdog"
+        };
+
+        _watchdogThread.Start();
+    }
+
+    private void StopHighPriorityWatchdog()
+    {
+        _watchdogCts?.Cancel();
+        _watchdogThread = null;
+    }
+
+    private void ForceForegroundOverlay()
+    {
+        if (_overlayHandles.Count == 0) return;
+
+        nint primaryHwnd = _overlayHandles[0];
+        nint currentFg = NativeMethods.GetForegroundWindow();
+
+        uint currentThread = NativeMethods.GetCurrentThreadId();
+        uint fgThread = NativeMethods.GetWindowThreadProcessId(currentFg, out _);
+
+        foreach (var handle in _overlayHandles)
+        {
+            NativeMethods.SetWindowPos(handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW | NativeMethods.SWP_NOACTIVATE);
+        }
+
+        if (currentThread != fgThread)
+        {
+            NativeMethods.AttachThreadInput(currentThread, fgThread, true);
+            NativeMethods.SetForegroundWindow(primaryHwnd);
+            NativeMethods.BringWindowToTop(primaryHwnd);
+            NativeMethods.AttachThreadInput(currentThread, fgThread, false);
+        }
+        else
+        {
+            NativeMethods.SetForegroundWindow(primaryHwnd);
+            NativeMethods.BringWindowToTop(primaryHwnd);
+        }
+    }
+
+    private const string SystemPoliciesPath = @"Software\Microsoft\Windows\CurrentVersion\Policies\System";
+    private const string ExplorerPoliciesPath = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+
+    private void ApplySecurityPolicies()
+    {
+        try
+        {
+            using var sysKey = Registry.CurrentUser.CreateSubKey(SystemPoliciesPath, writable: true);
+            sysKey?.SetValue("DisableTaskMgr", 1, RegistryValueKind.DWord);
+            sysKey?.SetValue("DisableLockWorkstation", 1, RegistryValueKind.DWord);
+            sysKey?.SetValue("DisableChangePassword", 1, RegistryValueKind.DWord);
+
+            using var expKey = Registry.CurrentUser.CreateSubKey(ExplorerPoliciesPath, writable: true);
+            expKey?.SetValue("NoLogoff", 1, RegistryValueKind.DWord);
+            expKey?.SetValue("NoClose", 1, RegistryValueKind.DWord);
+            expKey?.SetValue("NoRun", 1, RegistryValueKind.DWord);
+
+            _policiesAppliedByUs = true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("[Lockdown] Could not write security registry policies.", ex);
+        }
+    }
+
+    private void RestoreSecurityPolicies()
+    {
+        if (!_policiesAppliedByUs) return;
+        try
+        {
+            using var sysKey = Registry.CurrentUser.OpenSubKey(SystemPoliciesPath, writable: true);
+            sysKey?.DeleteValue("DisableTaskMgr", false);
+            sysKey?.DeleteValue("DisableLockWorkstation", false);
+            sysKey?.DeleteValue("DisableChangePassword", false);
+
+            using var expKey = Registry.CurrentUser.OpenSubKey(ExplorerPoliciesPath, writable: true);
+            expKey?.DeleteValue("NoLogoff", false);
+            expKey?.DeleteValue("NoClose", false);
+            expKey?.DeleteValue("NoRun", false);
+
+            _policiesAppliedByUs = false;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("[Lockdown] Could not clear security registry policies.", ex);
+        }
+    }
+
+    private void DisableStickyKeys()
+    {
+        try
+        {
+            NativeMethods.STICKYKEYS sk = new NativeMethods.STICKYKEYS
+            {
+                cbSize = Marshal.SizeOf<NativeMethods.STICKYKEYS>(),
+                dwFlags = 0
+            };
+            NativeMethods.SystemParametersInfo(NativeMethods.SPI_SETSTICKYKEYS, sk.cbSize, ref sk, 0);
+        }
+        catch { }
+    }
+
     public static IReadOnlyList<MonitorBounds> EnumerateMonitors()
     {
         var results = new List<MonitorBounds>();
-
         bool Callback(nint hMonitor, nint hdc, ref NativeMethods.RECT rect, nint data)
         {
             var info = new NativeMethods.MONITORINFOEX
             {
-                cbSize = System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFOEX>()
+                cbSize = Marshal.SizeOf<NativeMethods.MONITORINFOEX>()
             };
             if (NativeMethods.GetMonitorInfo(hMonitor, ref info))
             {
@@ -239,63 +404,15 @@ public sealed class SystemLockdownManager : IDisposable
                     info.rcMonitor.Width, info.rcMonitor.Height,
                     (info.dwFlags & MONITORINFOF_PRIMARY) != 0));
             }
-            return true; // keep enumerating
+            return true;
         }
-
         NativeMethods.EnumDisplayMonitors(0, 0, Callback, 0);
         return results;
     }
 
-    // ------------------------------------------------------------------
-    // Foreground-window enforcement
-    // ------------------------------------------------------------------
-
-    /// <summary>Registers an overlay window's handle so the watchdog knows it's one of "ours" and won't fight itself for focus.</summary>
-    public void RegisterOverlayHandle(nint hwnd) => _overlayHandles.Add(hwnd);
-
-    /// <summary>
-    /// Starts a ~4Hz timer that re-asserts topmost + foreground on our overlay windows if
-    /// something else (a legitimately elevated dialog, a race during Explorer restart, etc.)
-    /// manages to steal it. 4Hz is a deliberate trade-off: fast enough that a human can never
-    /// see or interact with the desktop underneath even briefly, cheap enough (a couple of
-    /// P/Invoke calls) to stay well inside the <0.5% CPU budget while LOCKED.
-    /// </summary>
-    public void StartForegroundWatchdog()
-    {
-        _foregroundWatchdog = new System.Windows.Threading.DispatcherTimer(
-            System.Windows.Threading.DispatcherPriority.Send)
-        {
-            Interval = TimeSpan.FromMilliseconds(250)
-        };
-        _foregroundWatchdog.Tick += (_, _) => ReassertTopmost();
-        _foregroundWatchdog.Start();
-    }
-
-    public void StopForegroundWatchdog() => _foregroundWatchdog?.Stop();
-
-    private void ReassertTopmost()
-    {
-        if (!_keyboardHook.SuppressionEnabled) return; // only fight for focus while actually locked
-
-        var fg = NativeMethods.GetForegroundWindow();
-        if (_overlayHandles.Contains(fg)) return; // we already own focus — nothing to do
-
-        foreach (var handle in _overlayHandles)
-        {
-            NativeMethods.SetWindowPos(handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
-                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_SHOWWINDOW);
-        }
-
-        if (_overlayHandles.Count > 0)
-        {
-            NativeMethods.SetForegroundWindow(_overlayHandles[0]);
-        }
-    }
-
     public void Dispose()
     {
-        StopForegroundWatchdog();
-        RestoreTaskManager();
+        ReleaseLock();
         _keyboardHook.Dispose();
         GC.SuppressFinalize(this);
     }

@@ -6,6 +6,7 @@ using System.Windows;
 using NinetyAgent.Client.Core;
 using NinetyAgent.Client.Lockdown;
 using NinetyAgent.Client.Networking;
+using NinetyAgent.Client.UI;
 
 namespace NinetyAgent.Client;
 
@@ -14,6 +15,7 @@ public partial class App : Application
     private static ILogSink? _log;
     private static SystemLockdownManager? _lockdown;
     private static KioskOverlayWindow? _overlayWindow;
+    private static WebSocketAgentClient? _client;
     private static decimal? _currentBalance;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -23,25 +25,41 @@ public partial class App : Application
 
         try
         {
-            WriteDebugLog("[App.OnStartup] Bootstrap starting on UI thread...");
+            WriteDebugLog("[App.OnStartup] Démarrage de l'application...");
 
-            // 1. Initialize logging
+            // 1. Initialiser le système de logs
             _log = new FileLogSink("Agent", echoToConsole: true);
 
-            // 2. Instantiate and engage lockdown IMMEDIATELY on UI startup
-            WriteDebugLog("[Bootstrap] Initializing SystemLockdownManager...");
+            // 2. Initialiser le lockdown SANS l'engager
             _lockdown = new SystemLockdownManager(_log);
-            try
-            {
-                _lockdown.Initialize();
-                _lockdown.EngageLock();
-                _log.Info("[Bootstrap] Lockdown system initialized and engaged successfully.");
+            _lockdown.Initialize();
 
-                // 3. EXPLICITLY CREATE AND DISPLAY THE KIOSK UI WINDOW
-                WriteDebugLog("[Bootstrap] Instantiating KioskOverlayWindow...");
+            // 3. Démarrer le client réseau WebSocket en arrière-plan
+            _client = new WebSocketAgentClient(_log!, () => new ClientHeartbeatPayload());
+            _ = BootstrapNetworkAsync();
+
+            // 4. AFFICHER UNIQUEMENT LA FENÊTRE DE LOGIN SUR LE BUREAU NORMAL
+            WriteDebugLog("[App.OnStartup] Ouverture du LoginWindow...");
+            var loginWindow = new LoginWindow(_client)
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+                Topmost = true
+            };
+
+            // Bloque ici jusqu'à la réussite de la connexion ou l'annulation
+            bool? isSuccess = loginWindow.ShowDialog();
+
+            // 5. ENGAGER LE LOCKDOWN ET L'OVERLAY UNIQUEMENT SI LOGIN RÉUSSI
+            if (isSuccess == true)
+            {
+                _log?.Info("[Bootstrap] Connexion réussie ! Activation du verrouillage et du Kiosk...");
+
+                // Activer le verrouillage système
+                _lockdown.EngageLock();
+
+                // Créer et afficher l'overlay Kiosk
                 var bounds = new MonitorBounds(
-                    0,
-                    0,
+                    0, 0,
                     (int)SystemParameters.PrimaryScreenWidth,
                     (int)SystemParameters.PrimaryScreenHeight,
                     true
@@ -49,33 +67,41 @@ public partial class App : Application
 
                 _overlayWindow = new KioskOverlayWindow(bounds, showStatusPanel: true);
                 _overlayWindow.Show();
-                _overlayWindow.Activate();
-                WriteDebugLog("[Bootstrap] KioskOverlayWindow displayed successfully.");
+                _overlayWindow.Topmost = true;
+                _overlayWindow.Render(AgentState.LOCKED_IDLE, 0, _currentBalance, ConnectionState.Connected);
             }
-            catch (Exception ex)
+            else
             {
-                _log.Error("[Bootstrap] Lockdown or UI initialization failed", ex);
-                WriteDebugLog($"[Bootstrap] Lockdown/UI init error: {ex.Message}");
+                _log?.Info("[Bootstrap] Fermeture du login. Arrêt de l'application.");
+                Shutdown();
             }
-
-            // 4. Run network discovery asynchronously without blocking UI overlay display
-            _ = BootstrapNetworkAsync();
         }
         catch (Exception ex)
         {
-            WriteDebugLog($"[App.OnStartup] Critical failure: {ex}");
+            WriteDebugLog($"[App.OnStartup] Erreur critique: {ex}");
+            Shutdown();
         }
+    }
+
+    protected override async void OnExit(ExitEventArgs e)
+    {
+        if (_client != null)
+        {
+            await _client.DisposeAsync();
+        }
+        _lockdown?.Dispose();
+        base.OnExit(e);
     }
 
     private async Task BootstrapNetworkAsync()
     {
         try
         {
-            WriteDebugLog("[Bootstrap] Starting UDP discovery...");
+            WriteDebugLog("[Bootstrap] Démarrage découverte UDP...");
             var discovery = new UdpDiscoveryClient();
             var serverIp = await discovery.DiscoverServerIpAsync().ConfigureAwait(true) ?? "127.0.0.1";
 
-            _log?.Info($"[Bootstrap] Discovered server at {serverIp}");
+            _log?.Info($"[Bootstrap] Serveur détecté sur : {serverIp}");
 
             var server = new DiscoveredServer
             {
@@ -86,105 +112,40 @@ public partial class App : Application
                 ServerName = "LocalDebug"
             };
 
-            WriteDebugLog("[Bootstrap] Creating WebSocketAgentClient...");
-            var client = new WebSocketAgentClient(_log!, () => new ClientHeartbeatPayload());
-            client.ConnectionStateChanged += state =>
+            if (_client != null)
             {
-                _log?.Info($"[Bootstrap] ConnectionState changed to: {state}");
-                WriteDebugLog($"[Bootstrap] WS State: {state}");
-            };
-
-            // Handle session commands from server
-            client.SessionCommandReceived += cmd =>
-            {
-                _log?.Info($"[Bootstrap] SESSION_COMMAND received: Action={cmd.Action} SessionId={cmd.SessionId}");
-                WriteDebugLog($"[Bootstrap] Handling SESSION_COMMAND: {cmd.Action}");
-
-                // Update stored wallet balance if supplied in payload
-                if (cmd.WalletBalance.HasValue)
+                _client.ConnectionStateChanged += state =>
                 {
-                    _currentBalance = cmd.WalletBalance.Value;
-                }
+                    Dispatcher.Invoke(() =>
+                    {
+                        _overlayWindow?.Render(AgentState.LOCKED_IDLE, 0, _currentBalance, state);
+                    });
+                };
 
-                switch (cmd.Action)
+                _client.SessionCommandReceived += cmd =>
                 {
-                    case "LOCK":
-                        try
-                        {
-                            WriteDebugLog("[Bootstrap] EngageLock() called...");
+                    if (cmd.WalletBalance.HasValue) _currentBalance = cmd.WalletBalance.Value;
+
+                    switch (cmd.Action)
+                    {
+                        case "LOCK":
                             _lockdown?.EngageLock();
-                            Dispatcher.Invoke(() =>
-                            {
-                                if (_overlayWindow != null)
-                                {
-                                    _overlayWindow.Show();
-                                    _overlayWindow.Activate();
-                                    _overlayWindow.Topmost = true;
-                                    _overlayWindow.Render(AgentState.LOCKED_IDLE, 0, _currentBalance, ConnectionState.Connected);
-                                }
-                            });
-                            _log?.Info("[Bootstrap] Station locked successfully");
-                        }
-                        catch (Exception ex)
-                        {
-                            _log?.Error("[Bootstrap] EngageLock failed", ex);
-                        }
-                        break;
-
-                    case "BALANCE_UPDATE":
-                        Dispatcher.Invoke(() =>
-                        {
-                            _overlayWindow?.Render(AgentState.LOCKED_IDLE, 0, _currentBalance, ConnectionState.Connected);
-                        });
-                        _log?.Info($"[Bootstrap] Wallet balance updated to: {_currentBalance} TND");
-                        break;
-
-                    case "UNLOCK":
-                    case "START":
-                        try
-                        {
-                            WriteDebugLog("[Bootstrap] ReleaseLock() called...");
+                            Dispatcher.Invoke(() => _overlayWindow?.Show());
+                            break;
+                        case "UNLOCK":
+                        case "START":
                             _lockdown?.ReleaseLock();
-                            Dispatcher.Invoke(() =>
-                            {
-                                _overlayWindow?.Hide();
-                            });
-                            _log?.Info("[Bootstrap] Station unlocked successfully");
-                        }
-                        catch (Exception ex)
-                        {
-                            _log?.Error("[Bootstrap] ReleaseLock failed", ex);
-                        }
-                        break;
+                            Dispatcher.Invoke(() => _overlayWindow?.Hide());
+                            break;
+                    }
+                };
 
-                    default:
-                        _log?.Warn($"[Bootstrap] Unknown session action: {cmd.Action}");
-                        break;
-                }
-            };
-
-            // Handle remote execution commands
-            client.RemoteExecReceived += exec =>
-            {
-                _log?.Info($"[Bootstrap] REMOTE_EXEC received: {exec.Command} {exec.Arguments}");
-                try
-                {
-                    Process.Start(new ProcessStartInfo(exec.Command) { UseShellExecute = true });
-                }
-                catch (Exception ex)
-                {
-                    _log?.Error("[Bootstrap] RemoteExec failed", ex);
-                }
-            };
-
-            WriteDebugLog($"[Bootstrap] Starting WebSocket client to {serverIp}:8080");
-            client.Start(server, stationId: Guid.NewGuid().ToString(), agentVersion: "1.0.0", branchId: null);
-            _log?.Info("[Bootstrap] Bootstrap complete. Agent running.");
+                _client.Start(server, stationId: Guid.NewGuid().ToString(), agentVersion: "1.0.0", branchId: null);
+            }
         }
         catch (Exception ex)
         {
-            WriteDebugLog($"[Bootstrap] NETWORK FAILURE: {ex}");
-            try { _log?.Error("[Bootstrap] Network error", ex); } catch { }
+            WriteDebugLog($"[Bootstrap] Erreur réseau: {ex.Message}");
         }
     }
 

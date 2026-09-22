@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="NinetyAgentV0.1.vbproj">
+    <Platform Project="x86" />
+  </Project>
+</Solution>

@@ -1,0 +1,9 @@
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\NinetyAgent.Client.pdb
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\D3DCompiler_47_cor3.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\PenImc_cor3.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\PresentationNative_cor3.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\vcruntime140_cor3.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\wpfgfx_cor3.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\MonoPosixHelper.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\libMonoPosixHelper.dll
+C:\Users\ROG STRIX\Desktop\NinetyAgent\publish\NinetyAgent.Client\selfcontained\NinetyAgent.Client.exe

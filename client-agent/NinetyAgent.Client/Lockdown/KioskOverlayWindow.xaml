@@ -10,84 +10,301 @@
         WindowStartupLocation="Manual"
         Width="1920"
         Height="1080"
-        Background="#0A0A0F"
+        Background="#04060A"
         Cursor="Arrow"
         Loaded="OnLoaded">
 
-    <!--
-        Design notes:
-        - No border/chrome/taskbar entry: this window IS the desktop while locked, there is
-          nothing "behind" it a user should be able to perceive or reach.
-        - Cursor="None" on the LOCKED_IDLE / DISCONNECTED_LOCK view: the venue is paying for
-          gaming rigs, not for a gamer to fidget with a mouse cursor on a paywall screen.
-          The ACTIVE_SESSION view (this window hidden entirely) restores the normal cursor.
-        - Everything below is vector/text — zero bitmap assets — which keeps the compiled BAML
-          payload tiny and avoids any decode/GC churn on a timer tick, matching the "Zero UI
-          Repainting" resource strategy: only the TextBlocks bound to the countdown actually
-          repaint each second; the rest of the visual tree is static.
-    -->
+    <!-- ==================== ANIMATIONS & STYLES ==================== -->
+    <Window.Resources>
+        <!-- Pure XAML Continuous Storyboard Animations -->
+        <Storyboard x:Key="KioskAmbientAnimations" RepeatBehavior="Forever">
+
+            <!-- 1. Smooth Floating Card Levitation Effect -->
+            <DoubleAnimation Storyboard.TargetName="CardTransform"
+                             Storyboard.TargetProperty="Y"
+                             From="0" To="-10"
+                             Duration="0:0:3.5"
+                             AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <SineEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- 2. Continuous 360-Degree Tech Ring Rotation -->
+            <DoubleAnimation Storyboard.TargetName="LogoRingTransform"
+                             Storyboard.TargetProperty="Angle"
+                             From="0" To="360"
+                             Duration="0:0:18" />
+
+            <!-- 3. Vertical Tech Scanline Laser Sweep -->
+            <DoubleAnimation Storyboard.TargetName="ScanLineTransform"
+                             Storyboard.TargetProperty="Y"
+                             From="-200" To="1150"
+                             Duration="0:0:6" />
+
+            <!-- 4. Breathing Ambient Background Glow -->
+            <DoubleAnimation Storyboard.TargetName="AmbientGlow"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.3" To="0.75"
+                             Duration="0:0:4"
+                             AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <SineEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+
+            <!-- 5. Pulsing Connection Dot Glow -->
+            <DoubleAnimation Storyboard.TargetName="ConnectionDotGlow"
+                             Storyboard.TargetProperty="Opacity"
+                             From="0.35" To="0.9"
+                             Duration="0:0:1.2"
+                             AutoReverse="True">
+                <DoubleAnimation.EasingFunction>
+                    <QuadraticEase EasingMode="EaseInOut" />
+                </DoubleAnimation.EasingFunction>
+            </DoubleAnimation>
+        </Storyboard>
+    </Window.Resources>
+
+    <!-- Trigger Animations automatically on Window Load -->
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="Window.Loaded">
+            <BeginStoryboard Storyboard="{StaticResource KioskAmbientAnimations}" />
+        </EventTrigger>
+    </Window.Triggers>
+
     <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="561*"/>
+            <ColumnDefinition Width="79*"/>
+        </Grid.ColumnDefinitions>
+        <!-- ==================== DYNAMIC BACKGROUND LAYER ==================== -->
 
-        <!-- Center content -->
-        <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <!-- Breathing Radial Neon Ambient Glow -->
+        <Ellipse x:Name="AmbientGlow" Width="1000" Height="1000" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" Opacity="0.5" Margin="460,0,0,0">
+            <Ellipse.Fill>
+                <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5">
+                    <GradientStop Color="#250284C7" Offset="0" />
+                    <GradientStop Color="#0E0284C7" Offset="0.55" />
+                    <GradientStop Color="#0004060A" Offset="1" />
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+        </Ellipse>
 
-            <TextBlock Text="NINETY GAMING HOUSE"
-                       Foreground="#4D8AFF"
-                       FontSize="22"
-                       FontWeight="Bold"
-                       HorizontalAlignment="Center"
-                       Margin="0,0,0,40" />
+        <!-- Tech Grid Visual Pattern Overlay -->
+        <Rectangle Opacity="0.03" IsHitTestVisible="False" Grid.ColumnSpan="2">
+            <Rectangle.Fill>
+                <DrawingBrush TileMode="Tile" Viewport="0,0,48,48" ViewportUnits="Absolute">
+                    <DrawingBrush.Drawing>
+                        <GeometryDrawing Geometry="M 0,0 L 48,0 L 48,48 L 0,48 Z">
+                            <GeometryDrawing.Pen>
+                                <Pen Brush="#38BDF8" Thickness="1" />
+                            </GeometryDrawing.Pen>
+                        </GeometryDrawing>
+                    </DrawingBrush.Drawing>
+                </DrawingBrush>
+            </Rectangle.Fill>
+        </Rectangle>
 
-            <!-- Status message: "STATION LOCKED", "SESSION PAUSED", "RECONNECTING TO SERVER..." -->
-            <TextBlock x:Name="StatusMessageText"
-                       Text="STATION LOCKED"
-                       Foreground="#EDEDED"
-                       FontSize="34"
-                       FontWeight="SemiBold"
-                       HorizontalAlignment="Center"
-                       Margin="0,0,0,24" />
+        <!-- Animated Laser Scanline Sweep -->
+        <Canvas IsHitTestVisible="False" ClipToBounds="True" Grid.ColumnSpan="2">
+            <Rectangle Width="2000" Height="120" Canvas.Left="-40" Canvas.Top="0">
+                <Rectangle.RenderTransform>
+                    <TranslateTransform x:Name="ScanLineTransform" Y="-200" />
+                </Rectangle.RenderTransform>
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#0038BDF8" Offset="0" />
+                        <GradientStop Color="#1238BDF8" Offset="0.5" />
+                        <GradientStop Color="#0038BDF8" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+        </Canvas>
 
-            <!-- Countdown timer, hh:mm:ss — hidden (collapsed) outside an active/paused session -->
-            <TextBlock x:Name="SessionTimerText"
-                       Text="00:00:00"
-                       Foreground="#FFFFFF"
-                       FontSize="72"
-                       FontWeight="Light"
-                       FontFamily="Consolas"
-                       HorizontalAlignment="Center"
-                       Visibility="Collapsed"
-                       Margin="0,0,0,16" />
+        <!-- Dynamic Ambient Vector Lines -->
+        <Path Data="M -100,180 L 650,1080 M 1270,0 L 2020,920"
+              Stroke="#0284C7"
+              StrokeThickness="1"
+              Opacity="0.09"
+              IsHitTestVisible="False" Grid.ColumnSpan="2" />
 
-            <!-- Wallet balance -->
-            <TextBlock x:Name="BalanceText"
-                       Text="Balance: -- TND"
-                       Foreground="#9AA4B2"
-                       FontSize="18"
-                       HorizontalAlignment="Center"
-                       Margin="0,0,0,32" />
+        <!-- ==================== MAIN CONTENT UI ==================== -->
+        <Grid Grid.ColumnSpan="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-            <Border Background="#161B22"
-                    CornerRadius="8"
-                    Padding="20,12"
-                    BorderBrush="#2A3140"
-                    BorderThickness="1">
-                <TextBlock x:Name="HintText"
-                           Text="See venue staff to start or extend your session."
-                           Foreground="#6B7280"
-                           FontSize="14"
-                           HorizontalAlignment="Center" />
+            <!-- FLOATING KIOSK CARD -->
+            <Border Grid.Row="1"
+                    Width="580"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#FA090D16"
+                    CornerRadius="20"
+                    BorderBrush="#1E293B"
+                    BorderThickness="1"
+                    Padding="42,38">
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="CardTransform" Y="0" />
+                </Border.RenderTransform>
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="70" ShadowDepth="0" Opacity="0.85" />
+                </Border.Effect>
+
+                <Grid>
+                    <!-- Sci-Fi Card Corner Tech Accents -->
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Top" Width="14" Height="14" BorderThickness="2,2,0,0" BorderBrush="#38BDF8" Margin="-30,-26,0,0" Opacity="0.7" />
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Width="14" Height="14" BorderThickness="0,2,2,0" BorderBrush="#38BDF8" Margin="0,-26,-30,0" Opacity="0.7" />
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Width="14" Height="14" BorderThickness="2,0,0,2" BorderBrush="#38BDF8" Margin="-30,0,0,-22" Opacity="0.7" />
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Width="14" Height="14" BorderThickness="0,0,2,2" BorderBrush="#38BDF8" Margin="0,0,-30,-22" Opacity="0.7" />
+
+                    <StackPanel>
+                        <!-- ================= INSAT LOGO & BRANDING HEADER ================= -->
+                        <!-- INSAT LOGO & BRANDING HEADER -->
+                        <Grid HorizontalAlignment="Center" Margin="0,0,0,28">
+
+                            <!-- Rotating Exterior Tech Ring around Logo -->
+                            <Ellipse Width="86" Height="86" Stroke="#0284C7" StrokeThickness="1.5" StrokeDashArray="4,3" RenderTransformOrigin="0.5,0.5">
+                                <Ellipse.RenderTransform>
+                                    <RotateTransform x:Name="LogoRingTransform" Angle="0" />
+                                </Ellipse.RenderTransform>
+                            </Ellipse>
+
+                            <!-- INSAT Logo Frame with Light Background for High Contrast -->
+                            <Border Width="72" Height="72" CornerRadius="16" Padding="8" BorderBrush="#38BDF8" BorderThickness="1">
+                                <Border.Effect>
+                                    <DropShadowEffect Color="#0284C7" BlurRadius="18" ShadowDepth="0" Opacity="0.4" />
+                                </Border.Effect>
+
+                                <Image Source="/Assets/ieee-logo.png"
+       Width="56"
+       Height="56"
+       Stretch="Uniform"
+       RenderOptions.BitmapScalingMode="HighQuality" />
+                            </Border>
+                        </Grid>
+
+                        <!-- Venue Brand Title -->
+                        <TextBlock Text="NINETY GAMING HOUSE"
+                                   Foreground="#38BDF8"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,2" />
+
+                        <TextBlock Text="INSAT CAMPUS HUB"
+                                   Foreground="#64748B"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,28" />
+
+                        <Rectangle Height="1" Fill="#1E293B" Margin="20,0,20,24" />
+
+                        <!-- Status Message -->
+                        <TextBlock x:Name="StatusMessageText"
+                                   Text="STATION LOCKED"
+                                   Foreground="#F8FAFC"
+                                   FontSize="28"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,0,0,20" />
+
+                        <!-- Countdown Timer Display Box -->
+                        <Border Background="#05080E"
+                                CornerRadius="12"
+                                Padding="28,14"
+                                Margin="0,0,0,20"
+                                BorderBrush="#1E293B"
+                                BorderThickness="1">
+                            <TextBlock x:Name="SessionTimerText"
+                                       Text="00:00:00"
+                                       Foreground="#38BDF8"
+                                       FontSize="68"
+                                       FontWeight="Light"
+                                       FontFamily="Consolas"
+                                       HorizontalAlignment="Center"
+                                       Visibility="Collapsed">
+                                <TextBlock.Effect>
+                                    <DropShadowEffect Color="#38BDF8" BlurRadius="16" ShadowDepth="0" Opacity="0.4" />
+                                </TextBlock.Effect>
+                            </TextBlock>
+                        </Border>
+
+                        <!-- Wallet Balance Badge -->
+                        <Border Background="#0F172A"
+                                CornerRadius="20"
+                                Padding="18,8"
+                                HorizontalAlignment="Center"
+                                Margin="0,0,0,26"
+                                BorderBrush="#1E293B"
+                                BorderThickness="1">
+                            <StackPanel Orientation="Horizontal">
+                                <!-- Vector Credit Card Icon -->
+                                <Viewbox Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Path Data="M 2,5 C 2,3.34 3.34,2 5,2 L 19,2 C 20.66,2 22,3.34 22,5 L 22,19 C 22,20.66 20.66,22 19,22 L 5,22 C 3.34,22 2,20.66 2,19 Z M 2,8 L 22,8 M 6,15 L 10,15"
+                                          Stroke="#94A3B8"
+                                          StrokeThickness="2"
+                                          StrokeLineJoin="Round" />
+                                </Viewbox>
+                                <TextBlock x:Name="BalanceText"
+                                           Text="Balance: -- TND"
+                                           Foreground="#94A3B8"
+                                           FontSize="14.5"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Staff Action Hint Box -->
+                        <Border Background="#0A0E17"
+                                CornerRadius="10"
+                                Padding="20,14"
+                                BorderBrush="#1A2333"
+                                BorderThickness="1">
+                            <TextBlock x:Name="HintText"
+                                       Text="See venue staff to start or extend your session."
+                                       Foreground="#64748B"
+                                       FontSize="13.5"
+                                       HorizontalAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
             </Border>
-        </StackPanel>
 
-        <!-- Bottom-right connection indicator, small and unobtrusive per the Phase 3 "unobtrusive" requirement -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="24">
-            <Ellipse x:Name="ConnectionDot" Width="8" Height="8" Fill="#3FB950" Margin="0,0,8,0" />
-            <TextBlock x:Name="ConnectionStatusText" Text="Connected" Foreground="#6B7280" FontSize="12" />
-        </StackPanel>
+            <!-- ==================== FOOTER LAYER ==================== -->
+            <!-- Bottom Left: INSAT Lounge Tag -->
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="28">
+                <TextBlock Text="INSAT Esports &amp; Gaming Lounge" Foreground="#475569" FontSize="12" FontWeight="Medium" />
+            </StackPanel>
+
+            <!-- Bottom Right: Connection Status Indicator with Pulsing Glow -->
+            <Border Grid.Row="2"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="28"
+                    Background="#090D16"
+                    CornerRadius="16"
+                    Padding="14,7"
+                    BorderBrush="#1E293B"
+                    BorderThickness="1">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Grid Margin="0,0,8,0">
+                        <!-- Pulsing Glow Effect Behind Connection Dot -->
+                        <Ellipse x:Name="ConnectionDotGlow" Width="12" Height="12" Fill="#22C55E" Opacity="0.5" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Ellipse.Effect>
+                                <BlurEffect Radius="8" />
+                            </Ellipse.Effect>
+                        </Ellipse>
+                        <Ellipse x:Name="ConnectionDot" Width="8" Height="8" Fill="#22C55E" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock x:Name="ConnectionStatusText" Text="Connected" Foreground="#64748B" FontSize="12" FontWeight="Medium" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

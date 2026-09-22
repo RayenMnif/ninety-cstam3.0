@@ -5,6 +5,9 @@ namespace NinetyAgent.Client.Interop;
 
 public static class NativeMethods
 {
+    // ------------------------------------------------------------------
+    // Device Notifications (USB / HID)
+    // ------------------------------------------------------------------
     public const int WM_DEVICECHANGE = 0x0219;
     public const int DBT_DEVICEREMOVECOMPLETE = 0x8004;
     public const int DBT_DEVTYP_DEVICEINTERFACE = 5;
@@ -48,31 +51,17 @@ public static class NativeMethods
     public static extern bool UnregisterDeviceNotification(nint Handle);
 
     // ------------------------------------------------------------------
-    // Monitor / window helpers used by the lockdown overlay and watchdog
+    // Monitor / Window Helpers & Lockdown Mechanics
     // ------------------------------------------------------------------
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_SHOWWINDOW = 0x0040;
+    public static readonly nint HWND_TOPMOST = new(-1);
 
-    public delegate bool MonitorEnumDelegate(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumDelegate lpfnEnum, nint dwData);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFOEX lpmi);
-
-    [DllImport("user32.dll")]
-    public static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetForegroundWindow(nint hWnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    public const int SWP_NOSIZE = 0x0001;
-    public const int SWP_NOMOVE = 0x0002;
-    public const int SWP_SHOWWINDOW = 0x0040;
-    public const int SWP_NOACTIVATE = 0x0010;
-    public static readonly nint HWND_TOPMOST = new IntPtr(-1);
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint SPI_SETSTICKYKEYS = 0x003B;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -97,13 +86,55 @@ public static class NativeMethods
         public string szDevice;
     }
 
-    // ------------------------------------------------------------------
-    // Windows Terminal Services (WTS) session management for Watchdog
-    // ------------------------------------------------------------------
-    // These allow the Watchdog (running as a Service in Session 0) to launch
-    // the Agent process into the logged-in user's interactive session (Session 1+),
-    // so that WPF UI windows are visible on the user's desktop.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct STICKYKEYS
+    {
+        public int cbSize;
+        public int dwFlags;
+    }
 
+    public delegate bool MonitorEnumDelegate(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
+    public delegate void WinEventDelegate(nint hWinEventHook, uint eventType, nint hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumDelegate lpfnEnum, nint dwData);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFOEX lpmi);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(nint hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfo", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint uiAction, int uiParam, ref STICKYKEYS pvParam, uint fWinIni);
+
+    // ------------------------------------------------------------------
+    // Windows Terminal Services (WTS) Session Management for Watchdog
+    // ------------------------------------------------------------------
     public const uint WTS_CURRENT_SERVER_HANDLE = 0;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]

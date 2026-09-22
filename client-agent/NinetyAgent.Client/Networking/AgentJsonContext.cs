@@ -11,6 +11,9 @@ namespace NinetyAgent.Client.Networking;
 [JsonSerializable(typeof(AgentEnvelope<SessionCommandPayload>), TypeInfoPropertyName = "AgentEnvelopeSessionCommandPayload")]
 [JsonSerializable(typeof(AgentEnvelope<StationRegisterPayload>), TypeInfoPropertyName = "AgentEnvelopeStationRegisterPayload")]
 [JsonSerializable(typeof(AgentEnvelope<AckPayload>), TypeInfoPropertyName = "AgentEnvelopeAckPayload")]
+[JsonSerializable(typeof(AgentEnvelope<AuthLoginPayload>))]
+[JsonSerializable(typeof(AgentEnvelope<AuthRegisterPayload>))]
+[JsonSerializable(typeof(AgentEnvelope<AuthResponsePayload>))]
 internal partial class AgentJsonContext : JsonSerializerContext
 {
 }

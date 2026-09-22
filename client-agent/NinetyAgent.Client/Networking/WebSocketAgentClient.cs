@@ -1,10 +1,10 @@
+using NinetyAgent.Client.Core;
+using NinetyAgent.Client.Networking;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using NinetyAgent.Client.Core;
-
 namespace NinetyAgent.Client.Networking;
 
 public enum ConnectionState
@@ -47,6 +47,7 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
     public event Action<ConnectionState>? ConnectionStateChanged;
     public event Action<SessionCommandPayload>? SessionCommandReceived;
     public event Action<RemoteExecPayload>? RemoteExecReceived;
+    public event Action<AuthResponsePayload>? AuthResponseReceived;
 
     public WebSocketAgentClient(ILogSink log, Func<ClientHeartbeatPayload> heartbeatFactory)
     {
@@ -200,6 +201,13 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
                     }
                     break;
 
+                case MessageType.AuthResponse:
+                    var authEnvelope = JsonSerializer.Deserialize(json, AgentJsonContext.Default.AgentEnvelopeAuthResponsePayload);
+                    if (authEnvelope?.Payload is not null)
+                    {
+                        AuthResponseReceived?.Invoke(authEnvelope.Payload);
+                    }
+                    break;
                 case MessageType.Ack:
                     break; // reserved for future correlation/telemetry-of-telemetry
 
@@ -280,5 +288,22 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
         _socket?.Dispose();
         _lifetimeCts.Dispose();
         _sendLock.Dispose();
+    }
+    public Task SendLoginAsync(string usernameOrEmail, string password, CancellationToken ct = default)
+    {
+        var payload = new AuthLoginPayload { UsernameOrEmail = usernameOrEmail, Password = password };
+        return SendAsync(MessageType.AuthLogin, payload, AgentJsonContext.Default.AgentEnvelopeAuthLoginPayload, ct);
+    }
+
+    public Task SendRegisterAsync(string username, string email, string password, CancellationToken ct = default)
+    {
+        var payload = new AuthRegisterPayload
+        {
+            Username = username,
+            Email = email,
+            Password = password,
+            Role = "GAMER"
+        };
+        return SendAsync(MessageType.AuthRegister, payload, AgentJsonContext.Default.AgentEnvelopeAuthRegisterPayload, ct);
     }
 }
