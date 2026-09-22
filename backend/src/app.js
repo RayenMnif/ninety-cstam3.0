@@ -1,6 +1,7 @@
 const Fastify = require('fastify');
 const fastifyPostgres = require('@fastify/postgres');
 const fastifyRedis = require('@fastify/redis');
+
 require('dotenv').config();
 
 async function buildApp(){
@@ -12,7 +13,12 @@ async function buildApp(){
     await app.register(fastifyRedis, {
         url: process.env.REDIS_URL,
     })
+
+    await app.register(require('./plugins/auth'));
+    
     await app.register(require('./routes/health'), {prefix: '/api'});
+    await app.register(require('./routes/auth'), {prefix: '/api/auth'});
+
     return app;
 }
 module.exports = buildApp;
