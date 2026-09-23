@@ -14,10 +14,13 @@ async function buildApp(){
         url: process.env.REDIS_URL,
     })
 
+    await app.register(require('@fastify/websocket'));
+    await app.register(require('./plugins/websocket'));
     await app.register(require('./plugins/auth'));
     
     await app.register(require('./routes/health'), {prefix: '/api'});
     await app.register(require('./routes/auth'), {prefix: '/api/auth'});
+    await app.register(require('./routes/ws'));
 
     return app;
 }
