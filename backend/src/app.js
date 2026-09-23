@@ -15,6 +15,7 @@ async function buildApp(){
     })
 
     await app.register(require('@fastify/websocket'));
+    
     await app.register(require('./plugins/websocket'));
     await app.register(require('./plugins/auth'));
     
