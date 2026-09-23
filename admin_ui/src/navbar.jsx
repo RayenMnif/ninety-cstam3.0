@@ -10,6 +10,7 @@ export const Navbar = ({ activeTab, setActiveTab, isLockdown, setIsLockdown, onO
   const navItems = [
     { id: 'stations', label: 'Station Grid', icon: LayoutGrid, badge: '24/30' },
     { id: 'players', label: 'Users', icon: Users, badge: '6' }, 
+    { id: 'telemetry', label: 'Telemetry', icon: Activity },
     { id: 'tournaments', label: 'Tournaments', icon: Trophy },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
