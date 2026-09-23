@@ -8,12 +8,6 @@ const MessageType = Object.freeze({
 
 const SessionActions = new Set(['START', 'PAUSE', 'LOCK', 'UNLOCK']);
 
-function requireAdmin(request, reply) {
-	if (request.user?.role !== 'ADMIN') {
-		return reply.code(403).send({ error: 'Administrator access required' });
-	}
-}
-
 function sendAck(socket, messageType, success = true, message = '') {
 	if (socket.readyState !== 1) return;
 	try {
@@ -28,7 +22,7 @@ function sendAck(socket, messageType, success = true, message = '') {
 
 async function websocketRoutes(fastify) {
 	fastify.post('/api/stations/:stationId/session-command', {
-		preHandler: [fastify.authenticate, requireAdmin],
+		preHandler: [fastify.authenticate, fastify.adminOnly],
 	}, async (request, reply) => {
 		const { stationId } = request.params;
 		const { action, sessionId = '', durationSeconds = 0, walletBalance } = request.body || {};

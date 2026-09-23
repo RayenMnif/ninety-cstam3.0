@@ -21,7 +21,14 @@ async function authPlugin(fastify, opts){
                 error: 'Unauthorized: Invalid or expired token'
             });
         }
-    })
+    });
+    fastify.decorate('adminOnly', async function (request, reply) {
+            if (!request.user || request.user.role !== 'ADMIN') {
+              return reply.status(403).send({
+                error: 'Forbidden: Admin access required',
+            })
+        }
+    });
 }
 
 module.exports = fp(authPlugin);
