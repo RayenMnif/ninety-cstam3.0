@@ -1,5 +1,4 @@
 // src/routes/sessions.js
-
 async function sessionRoutes(fastify, opts) {
 
     fastify.post('/start', {
@@ -62,9 +61,9 @@ async function sessionRoutes(fastify, opts) {
   
         await client.query('COMMIT');
   
-        // Step D: Send WebSocket UNLOCK command to the C# Agent
+        // Step D: Send WebSocket START command to the C# Agent
         const delivered = fastify.sendToStation(stationId, 'SESSION_COMMAND', {
-          action: 'UNLOCK',
+          action: 'START',
           sessionId: session.id,
           walletBalance: balance,
         });
@@ -236,6 +235,178 @@ async function sessionRoutes(fastify, opts) {
         await client.query('ROLLBACK');
         request.log.error(error);
         return reply.code(500).send({ error: error.message || 'Failed to stop session' });
+      } finally {
+        client.release();
+      }
+    });
+    // session unlock
+    fastify.post('/unlock', {
+      preHandler: [fastify.authenticate],
+    }, async (request, reply) => {
+      const customerId = request.user.id;
+      const { sessionId, stationId } = request.body || {};
+
+      const client = await fastify.pg.connect();
+
+      try {
+        let query = `SELECT id, station_id, customer_id, version FROM sessions WHERE status = 'PAUSED'`;
+        const params = [];
+
+        if (sessionId) {
+          params.push(sessionId);
+          query += ` AND id = $${params.length}`;
+        } else if (stationId) {
+          params.push(stationId);
+          query += ` AND station_id = $${params.length}`;
+        } else {
+          params.push(customerId);
+          query += ` AND customer_id = $${params.length}`;
+        }
+
+        const sessionRes = await client.query(query, params);
+        if (sessionRes.rows.length === 0) {
+          return reply.code(404).send({ error: 'No paused session found to unlock' });
+        }
+
+        const session = sessionRes.rows[0];
+
+        if (request.user.role !== 'ADMIN' && session.customer_id !== customerId) {
+          return reply.code(403).send({ error: 'Forbidden: You can only unlock your own session' });
+        }
+
+        const walletRes = await client.query(
+          `SELECT balance_millimes FROM wallets WHERE user_id = $1`,
+          [session.customer_id]
+        );
+
+        const balance = walletRes.rows[0]?.balance_millimes || '0';
+
+        await client.query('BEGIN');
+
+        const updateRes = await client.query(
+          `UPDATE sessions 
+          SET status = 'ACTIVE', version = version + 1 
+          WHERE id = $1 AND version = $2
+          RETURNING id, station_id, customer_id, status, version`,
+          [session.id, session.version]
+        );
+
+        if (updateRes.rows.length === 0) {
+          throw new Error('Concurrent session modification detected');
+        }
+
+        const actor = request.user.role === 'ADMIN' ? 'ADMIN' : 'GAMER';
+        await client.query(
+          `INSERT INTO session_events (session_id, type, actor, payload)
+          VALUES ($1, 'SESSION_RESUMED', $2, $3)`,
+          [session.id, actor, { unlockedAt: new Date().toISOString() }]
+        );
+
+        await client.query('COMMIT');
+
+        let delivered = false;
+        try {
+          delivered = fastify.sendToStation(session.station_id, 'SESSION_COMMAND', {
+            action: 'UNLOCK',
+            sessionId: session.id,
+            walletBalance: balance.toString(),
+          });
+        } catch (wsErr) {
+          fastify.log.warn(`Station offline: ${wsErr.message}`);
+        }
+
+        return reply.send({
+          message: 'Session unlocked successfully',
+          session: updateRes.rows[0],
+          delivered,
+        });
+
+      } catch (error) {
+        await client.query('ROLLBACK');
+        request.log.error(error);
+        return reply.code(500).send({ error: error.message || 'Failed to unlock session' });
+      } finally {
+        client.release();
+      }
+    });
+    // Session lock
+    fastify.post('/lock', {
+      preHandler: [fastify.authenticate],
+    }, async (request, reply) => {
+      const customerId = request.user.id;
+      const { sessionId, stationId } = request.body || {};
+  
+      const client = await fastify.pg.connect();
+  
+      try {
+        let query = `SELECT id, station_id, customer_id, version FROM sessions WHERE status = 'ACTIVE'`;
+        const params = [];
+  
+        if (sessionId) {
+          params.push(sessionId);
+          query += ` AND id = $${params.length}`;
+        } else if (stationId) {
+          params.push(stationId);
+          query += ` AND station_id = $${params.length}`;
+        } else {
+          params.push(customerId);
+          query += ` AND customer_id = $${params.length}`;
+        }
+  
+        const sessionRes = await client.query(query, params);
+        if (sessionRes.rows.length === 0) {
+          return reply.code(404).send({ error: 'No active session found to lock' });
+        }
+  
+        const session = sessionRes.rows[0];
+  
+        if (request.user.role !== 'ADMIN' && session.customer_id !== customerId) {
+          return reply.code(403).send({ error: 'Forbidden: You can only lock your own session' });
+        }
+  
+        await client.query('BEGIN');
+  
+        const updateRes = await client.query(
+          `UPDATE sessions 
+           SET status = 'PAUSED', version = version + 1 
+           WHERE id = $1 AND version = $2
+           RETURNING id, station_id, customer_id, status, version`,
+          [session.id, session.version]
+        );
+  
+        if (updateRes.rows.length === 0) {
+          throw new Error('Concurrent session modification detected');
+        }
+  
+        const actor = request.user.role === 'ADMIN' ? 'ADMIN' : 'GAMER';
+        await client.query(
+          `INSERT INTO session_events (session_id, type, actor, payload)
+           VALUES ($1, 'SESSION_PAUSED', $2, $3)`,
+          [session.id, actor, { lockedAt: new Date().toISOString() }]
+        );
+  
+        await client.query('COMMIT');
+  
+        let delivered = false;
+        try {
+          delivered = fastify.sendToStation(session.station_id, 'SESSION_COMMAND', {
+            action: 'LOCK',
+            sessionId: session.id,
+          });
+        } catch (wsErr) {
+          fastify.log.warn(`Station offline: ${wsErr.message}`);
+        }
+  
+        return reply.send({
+          message: 'Session locked successfully',
+          session: updateRes.rows[0],
+          delivered,
+        });
+  
+      } catch (error) {
+        await client.query('ROLLBACK');
+        request.log.error(error);
+        return reply.code(500).send({ error: error.message || 'Failed to lock session' });
       } finally {
         client.release();
       }
