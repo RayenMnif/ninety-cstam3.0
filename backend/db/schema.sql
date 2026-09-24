@@ -66,7 +66,7 @@ CREATE TABLE session_events(
     session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     type VARCHAR(50) NOT NULL CHECK (type IN ('SESSION_STARTED', 'SESSION_PAUSED', 'SESSION_RESUMED', 'SESSION_ENDED')),
     at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-    actor VARCHAR(50) NOT NULL CHECK (actor IN ('SYSTEM', 'ADMIN', 'PLAYER')),
+    actor VARCHAR(50) NOT NULL CHECK (actor IN ('SYSTEM', 'ADMIN', 'GAMER')),
     payload JSONB -- exemple: {'admin-id': 3, 'reason': 'customer went to grab food'}
 );
 
