@@ -12,14 +12,14 @@ CREATE TABLE users(
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) DEFAULT 'gamer' CHECK(role IN ('GAMER', 'ADMIN')),
+    role VARCHAR(20) DEFAULT 'GAMER' CHECK(role IN ('GAMER', 'ADMIN')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'ACTIVE' CHECK (status in ('ACTIVE', 'BANNED', 'DEACTIVATED'))
 );
 
 CREATE TABLE wallets(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     balance_millimes BIGINT DEFAULT 0 CHECK (balance_millimes >= 0),
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -80,8 +80,11 @@ CREATE TABLE charges(
 
 CREATE TABLE payments(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id UUID NOT NULL REFERENCES users(id),
+    customer_id UUID NOT NULL REFERENCES users(id), -- GAMERS
+    processed_by UUID NOT NULL REFERENCES users(id), -- ADMINS
     session_id UUID REFERENCES sessions(id),
     amount_millimes BIGINT NOT NULL,
-    at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    payment_method VARCHAR(20) NOT NULL DEFAULT 'CASH' CHECK(payment_method in ('CASH', 'CARD', 'ONLINE', 'VOUCHER', 'ADJUSTMENT')),
+    reference_note VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
