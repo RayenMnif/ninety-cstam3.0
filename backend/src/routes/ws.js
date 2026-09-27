@@ -4,6 +4,8 @@ const MessageType = Object.freeze({
 	ClientHeartbeat: 'CLIENT_HEARTBEAT',
 	SecurityAlert: 'SECURITY_ALERT',
 	SessionCommand: 'SESSION_COMMAND',
+	AuthLogin: 'AUTH_LOGIN',
+	AuthRegister: 'AUTH_REGISTER',
 });
 
 const SessionActions = new Set(['START', 'PAUSE', 'LOCK', 'UNLOCK']);
@@ -13,7 +15,9 @@ function sendAck(socket, messageType, success = true, message = '') {
 	try {
 		socket.send(JSON.stringify({
 			type: MessageType.Ack,
-			payload: { messageId: messageType, success, message },
+			Type: MessageType.Ack,
+			payload: { messageId: messageType, success, message, Success: success, Message: message },
+			Payload: { messageId: messageType, success, message, Success: success, Message: message },
 		}));
 	} catch (_) {
 		// The agent may disconnect between message processing and the ACK.
@@ -159,7 +163,7 @@ async function websocketRoutes(fastify) {
 			stationId = null;
 		};
 
-		socket.on('message', (rawMessage) => {
+		socket.on('message', async (rawMessage) => {
 			let envelope;
 			try {
 				envelope = JSON.parse(rawMessage.toString());
@@ -169,50 +173,81 @@ async function websocketRoutes(fastify) {
 				return;
 			}
 
-			if (!envelope || typeof envelope.type !== 'string') {
+			// Support de la casse C# (Type / Payload) et JS/Postman (type / payload)
+			const messageType = envelope?.type || envelope?.Type;
+			const payload = envelope?.payload || envelope?.Payload || {};
+
+			if (!messageType || typeof messageType !== 'string') {
 				sendAck(socket, 'INVALID_MESSAGE', false, 'Message type is required');
 				return;
 			}
 
-			const payload = envelope.payload || {};
-			switch (envelope.type) {
-				case MessageType.StationRegister: {
-					if (typeof payload.stationId !== 'string' || payload.stationId.length === 0) {
+			fastify.log.info({ type: messageType }, 'WebSocket message received');
+
+			switch (messageType) {
+				case MessageType.AuthLogin:
+				case 'AUTH_LOGIN':
+					if (fastify.authHandler) {
+						await fastify.authHandler.handleLogin(socket, payload);
+					} else {
+						fastify.log.error('authHandler is not registered on fastify instance');
+						sendAck(socket, 'AUTH_LOGIN', false, 'Auth service unavailable');
+					}
+					break;
+
+				case MessageType.AuthRegister:
+				case 'AUTH_REGISTER':
+					if (fastify.authHandler) {
+						await fastify.authHandler.handleRegister(socket, payload);
+					} else {
+						fastify.log.error('authHandler is not registered on fastify instance');
+						sendAck(socket, 'AUTH_REGISTER', false, 'Auth service unavailable');
+					}
+					break;
+
+				case MessageType.StationRegister:
+				case 'STATION_REGISTER': {
+					const stationIdVal = payload.stationId || payload.StationId;
+					if (typeof stationIdVal !== 'string' || stationIdVal.length === 0) {
 						sendAck(socket, MessageType.StationRegister, false, 'stationId is required');
 						return;
 					}
 
 					unregister();
-					stationId = payload.stationId;
-					const previous = fastify.agentConnections.get(stationId);
+					stationId = stationIdVal;
+					const previous = fastify.agentConnections?.get(stationId);
 					if (previous?.socket !== socket) previous?.socket.close(1000, 'Replaced by new connection');
 
-					fastify.agentConnections.set(stationId, {
-						socket,
-						station: payload,
-						connectedAt: new Date().toISOString(),
-						lastHeartbeatAt: null,
-					});
+					if (fastify.agentConnections) {
+						fastify.agentConnections.set(stationId, {
+							socket,
+							station: payload,
+							connectedAt: new Date().toISOString(),
+							lastHeartbeatAt: null,
+						});
+					}
 					fastify.log.info({ stationId }, 'Agent WebSocket registered');
 					sendAck(socket, MessageType.StationRegister);
 					break;
 				}
 
-				case MessageType.ClientHeartbeat: {
+				case MessageType.ClientHeartbeat:
+				case 'CLIENT_HEARTBEAT': {
 					if (!stationId) {
 						sendAck(socket, MessageType.ClientHeartbeat, false, 'Register the station first');
 						return;
 					}
-					const connection = fastify.agentConnections.get(stationId);
-					if (connection) {
-						connection.lastHeartbeatAt = new Date().toISOString();
-						connection.heartbeat = payload;
+					const conn = fastify.agentConnections?.get(stationId);
+					if (conn) {
+						conn.lastHeartbeatAt = new Date().toISOString();
+						conn.heartbeat = payload;
 					}
 					sendAck(socket, MessageType.ClientHeartbeat);
 					break;
 				}
 
 				case MessageType.SecurityAlert:
+				case 'SECURITY_ALERT':
 					if (!stationId) {
 						sendAck(socket, MessageType.SecurityAlert, false, 'Register the station first');
 						return;
@@ -222,8 +257,8 @@ async function websocketRoutes(fastify) {
 					break;
 
 				default:
-					fastify.log.debug({ stationId, type: envelope.type }, 'Unhandled agent WebSocket message');
-					sendAck(socket, envelope.type, false, 'Unsupported message type');
+					fastify.log.debug({ stationId, type: messageType }, 'Unhandled agent WebSocket message');
+					sendAck(socket, messageType, false, 'Unsupported message type');
 			}
 		});
 

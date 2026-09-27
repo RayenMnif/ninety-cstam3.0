@@ -45,6 +45,7 @@ public partial class App : Application
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 Topmost = true
             };
+            _lockdown.EngageLock();
 
             // Bloque ici jusqu'à la réussite de la connexion ou l'annulation
             bool? isSuccess = loginWindow.ShowDialog();
@@ -54,10 +55,8 @@ public partial class App : Application
             {
                 _log?.Info("[Bootstrap] Connexion réussie ! Activation du verrouillage et du Kiosk...");
 
-                // Activer le verrouillage système
                 _lockdown.EngageLock();
 
-                // Créer et afficher l'overlay Kiosk
                 var bounds = new MonitorBounds(
                     0, 0,
                     (int)SystemParameters.PrimaryScreenWidth,
@@ -97,11 +96,11 @@ public partial class App : Application
     {
         try
         {
-            WriteDebugLog("[Bootstrap] Démarrage découverte UDP...");
-            var discovery = new UdpDiscoveryClient();
-            var serverIp = await discovery.DiscoverServerIpAsync().ConfigureAwait(true) ?? "127.0.0.1";
+            WriteDebugLog("[Bootstrap] Connexion directe au serveur local...");
 
-            _log?.Info($"[Bootstrap] Serveur détecté sur : {serverIp}");
+            // Bypass UDP discovery for local development
+            string serverIp = "127.0.0.1";
+            _log?.Info($"[Bootstrap] Serveur local ciblé : {serverIp}");
 
             var server = new DiscoveredServer
             {

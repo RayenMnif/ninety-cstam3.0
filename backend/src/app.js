@@ -1,6 +1,7 @@
 const Fastify = require('fastify');
 const fastifyPostgres = require('@fastify/postgres');
 const fastifyRedis = require('@fastify/redis');
+const { AuthHandler } = require('./handlers/auth-handler');
 
 require('dotenv').config();
 
@@ -12,7 +13,13 @@ async function buildApp(){
     });
     await app.register(fastifyRedis, {
         url: process.env.REDIS_URL,
-    })
+    });
+
+    const authHandler = new AuthHandler({
+        db: app.pg,
+        logger: app.log
+    });
+    app.decorate('authHandler', authHandler);
 
     // api docs 
     await app.register(require('@fastify/swagger'), {

@@ -19,25 +19,54 @@ class AuthHandler {
   }
 
   async handleLogin(socket, payload) {
-    // Support Email / email & Password / password
-    const email = payload?.Email || payload?.email;
-    const password = payload?.Password || payload?.password;
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch (err) {
+        this.logger?.warn('Failed to parse stringified login payload');
+      }
+    }
 
-    this.logger?.info({ email }, 'Processing AUTH_LOGIN attempt');
+    this.logger?.info({ payload }, 'Processing AUTH_LOGIN attempt');
 
-    if (!email || !password) {
-      this.logger?.warn('AUTH_LOGIN failed: Missing email or password');
-      return this._sendResponse(socket, false, 'Email and password are required');
+    // Prise en compte exacte du champ C# "UsernameOrEmail"
+    const identifier =
+      payload?.UsernameOrEmail ||
+      payload?.usernameOrEmail ||
+      payload?.EmailOrUsername ||
+      payload?.emailOrUsername ||
+      payload?.Email ||
+      payload?.email ||
+      payload?.Username ||
+      payload?.username ||
+      payload?.Identifier ||
+      payload?.identifier ||
+      payload?.Login ||
+      payload?.login ||
+      payload?.User ||
+      payload?.user;
+
+    const password =
+      payload?.Password ||
+      payload?.password ||
+      payload?.Pass ||
+      payload?.pass ||
+      payload?.Pwd ||
+      payload?.pwd;
+
+    if (!identifier || !password) {
+      this.logger?.warn({ payload }, 'AUTH_LOGIN failed: Missing email/username or password');
+      return this._sendResponse(socket, false, 'Email or password are required');
     }
 
     try {
       const result = await this.db.query(
-        'SELECT id, username, password_hash, role FROM users WHERE email = $1',
-        [email]
+        'SELECT id, username, password_hash, role FROM users WHERE email = $1 OR username = $1',
+        [identifier]
       );
 
       if (result.rows.length === 0) {
-        this.logger?.warn({ email }, 'AUTH_LOGIN failed: User not found');
+        this.logger?.warn({ identifier }, 'AUTH_LOGIN failed: User not found');
         return this._sendResponse(socket, false, 'Invalid credentials');
       }
 
@@ -45,7 +74,7 @@ class AuthHandler {
       const validPassword = await bcrypt.compare(password, user.password_hash);
 
       if (!validPassword) {
-        this.logger?.warn({ email }, 'AUTH_LOGIN failed: Invalid password');
+        this.logger?.warn({ identifier }, 'AUTH_LOGIN failed: Invalid password');
         return this._sendResponse(socket, false, 'Invalid credentials');
       }
 
@@ -68,6 +97,12 @@ class AuthHandler {
   }
 
   async handleRegister(socket, payload) {
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch (err) {}
+    }
+
     const username = payload?.Username || payload?.username;
     const email = payload?.Email || payload?.email;
     const password = payload?.Password || payload?.password;
@@ -115,7 +150,6 @@ class AuthHandler {
   }
 
   _sendResponse(socket, success, message, extraData = {}) {
-    // Structure compatible C# (PascalCase) et JavaScript / Postman (camelCase)
     const payloadData = {
       success,
       Success: success,
