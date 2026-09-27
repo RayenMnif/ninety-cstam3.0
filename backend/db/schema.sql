@@ -6,6 +6,7 @@ DROP TABLE IF EXISTS wallets CASCADE;
 DROP TABLE IF EXISTS stations CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS session_events CASCADE;
+DROP TABLE IF EXISTS reservations CASCADE;
 
 CREATE TABLE users(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -51,8 +52,8 @@ CREATE TABLE sessions(
     customer_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     tariff_id UUID NOT NULL REFERENCES tariffs(id),
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK(status IN ('ACTIVE', 'PAUSED', 'PENDING', 'CLOSED', 'SETTLED', 'CANCELLED')),
-    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    closed_at TIMESTAMP,
+    opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMPTZ,
     version INT NOT NULL DEFAULT 1
 );
     
@@ -87,4 +88,19 @@ CREATE TABLE payments(
     payment_method VARCHAR(20) NOT NULL DEFAULT 'CASH' CHECK(payment_method in ('CASH', 'CARD', 'ONLINE', 'VOUCHER', 'ADJUSTMENT')),
     reference_note VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE reservations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    station_id UUID NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tariff_id UUID NOT NULL REFERENCES tariffs(id),
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    total_cost_millimes BIGINT NOT NULL CHECK (total_cost_millimes >= 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED' 
+        CHECK (status IN ('CONFIRMED', 'CHECKED_IN', 'EXPIRED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_valid_reservation_range CHECK (end_time > start_time)
 );
