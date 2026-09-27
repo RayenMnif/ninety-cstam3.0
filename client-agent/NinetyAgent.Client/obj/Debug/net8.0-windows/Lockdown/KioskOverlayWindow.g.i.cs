@@ -140,7 +140,7 @@ namespace NinetyAgent.Client.Lockdown {
                 return;
             }
             _contentLoaded = true;
-            System.Uri resourceLocater = new System.Uri("/NinetyAgent.Client;V1.0.0.0;component/lockdown/kioskoverlaywindow.xaml", System.UriKind.Relative);
+            System.Uri resourceLocater = new System.Uri("/NinetyAgent.Client;component/lockdown/kioskoverlaywindow.xaml", System.UriKind.Relative);
             
             #line 1 "..\..\..\..\Lockdown\KioskOverlayWindow.xaml"
             System.Windows.Application.LoadComponent(this, resourceLocater);

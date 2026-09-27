@@ -1,0 +1,17 @@
+[
+  {
+    "Name": "Nouveau profil",
+    "Projects": [
+      {
+        "Path": "NinetyAgent.Client.csproj",
+        "Action": "Start",
+        "DebugTarget": "NinetyAgent.Client"
+      },
+      {
+        "Path": "..\\NinetyAgent.Watchdog\\NinetyAgent.Watchdog.csproj",
+        "Action": "Start",
+        "DebugTarget": "NinetyAgent.Watchdog"
+      }
+    ]
+  }
+]

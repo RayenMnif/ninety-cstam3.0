@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "KmRu2chPGt8=",
+  "dgSpecHash": "E/aE4dcpVwA=",
   "success": true,
-  "projectFilePath": "C:\\Users\\ROG STRIX\\Desktop\\NinetyAgent\\client-agent\\NinetyAgent.Watchdog\\NinetyAgent.Watchdog.csproj",
+  "projectFilePath": "C:\\Users\\ROG STRIX\\Desktop\\ninety-cstam3.0\\client-agent\\NinetyAgent.Watchdog\\NinetyAgent.Watchdog.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\ROG STRIX\\.nuget\\packages\\blacksharp.core\\1.0.7\\blacksharp.core.1.0.7.nupkg.sha512",
     "C:\\Users\\ROG STRIX\\.nuget\\packages\\diskinfotoolkit\\1.1.2\\diskinfotoolkit.1.1.2.nupkg.sha512",
