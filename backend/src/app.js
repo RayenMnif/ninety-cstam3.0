@@ -14,6 +14,52 @@ async function buildApp(){
         url: process.env.REDIS_URL,
     })
 
+    // api docs 
+    await app.register(require('@fastify/swagger'), {
+        openapi: {
+          info: {
+            title: 'Esports Venue Management API',
+            description: 'Backend REST API for workstation management, atomic billing, and session control.',
+            version: '1.0.0',
+          },
+          servers: [
+            {
+              url: 'http://localhost:3000',
+              description: 'Development Server',
+            },
+          ],
+          components: {
+            securitySchemes: {
+              bearerAuth: {
+                type: 'http',
+                scheme: 'bearer',
+                bearerFormat: 'JWT',
+                description: 'Enter your JWT access token',
+              },
+            },
+          },
+        },
+      });
+    
+      await app.register(require('@fastify/swagger-ui'), {
+        routePrefix: '/docs',
+        uiConfig: {
+          docExpansion: 'list',
+          deepLinking: false,
+        },
+        uiHooks: {
+          onRequest: function (request, reply, next) {
+            next();
+          },
+          preHandler: function (request, reply, next) {
+            next();
+          },
+        },
+        staticCSP: true,
+        transformStaticCSP: (header) => header,
+      });
+
+      
     await app.register(require('@fastify/websocket'));
     
     await app.register(require('./plugins/websocket'));
