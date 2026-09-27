@@ -3,7 +3,7 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace NinetyAgent.Client.Networking;
 
-[JsonSourceGenerationOptions(WriteIndented = false)]
+[JsonSourceGenerationOptions(WriteIndented = false, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(AgentEnvelopeHeader))]
 [JsonSerializable(typeof(AgentEnvelope<ClientHeartbeatPayload>), TypeInfoPropertyName = "AgentEnvelopeClientHeartbeatPayload")]
 [JsonSerializable(typeof(AgentEnvelope<SecurityAlertPayload>), TypeInfoPropertyName = "AgentEnvelopeSecurityAlertPayload")]

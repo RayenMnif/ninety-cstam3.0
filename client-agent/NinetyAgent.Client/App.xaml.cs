@@ -106,9 +106,9 @@ public partial class App : Application
             var server = new DiscoveredServer
             {
                 Address = serverIp,
-                WebSocketPort = 3000,
+                WebSocketPort = 8080,
                 IpAddress = serverIp,
-                Port = 3000,
+                Port = 8080,
                 ServerName = "LocalDebug"
             };
 

@@ -111,58 +111,70 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
     {
         if (_serverUri is null) throw new InvalidOperationException("Start() was never called.");
 
-        _socket = new ClientWebSocket();
-        _socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
-
-        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        connectCts.CancelAfter(ConnectTimeout);
-        await _socket.ConnectAsync(_serverUri, connectCts.Token).ConfigureAwait(false);
-
-        SetState(ConnectionState.Connected);
-        _log.Info($"[WebSocket] Connected to {_serverUri}");
-
-        await SendAsync(MessageType.StationRegister, new StationRegisterPayload
+        var socket = new ClientWebSocket();
+        _socket = socket;
+        using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task? heartbeatTask = null;
+        Task? receiveTask = null;
+        try
         {
-            StationId = _stationId,
-            StationName = Environment.MachineName,
-            AgentVersion = _agentVersion,
-            BranchId = _branchId
-        }, AgentJsonContext.Default.AgentEnvelopeStationRegisterPayload, ct).ConfigureAwait(false);
+            socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(10);
 
-        // Heartbeat and receive pumps run concurrently; either faulting tears down the socket
-        // and lets the outer RunLoopAsync catch + reconnect.
-        var heartbeatTask = HeartbeatPumpAsync(ct);
-        var receiveTask = ReceivePumpAsync(ct);
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(ConnectTimeout);
+            await socket.ConnectAsync(_serverUri, connectCts.Token).ConfigureAwait(false);
 
-        var completed = await Task.WhenAny(heartbeatTask, receiveTask).ConfigureAwait(false);
-        await completed.ConfigureAwait(false); // rethrow whichever faulted first
+            SetState(ConnectionState.Connected);
+            _log.Info($"[WebSocket] Connected to {_serverUri}");
 
-        // If we get here without an exception, the socket closed gracefully server-side.
-        throw new WebSocketException("Server closed the connection.");
+            await SendAsync(socket, MessageType.StationRegister, new StationRegisterPayload
+            {
+                StationId = _stationId,
+                StationName = Environment.MachineName,
+                AgentVersion = _agentVersion,
+                BranchId = _branchId
+            }, AgentJsonContext.Default.AgentEnvelopeStationRegisterPayload, ct).ConfigureAwait(false);
+
+            heartbeatTask = HeartbeatPumpAsync(socket, pumpCts.Token);
+            receiveTask = ReceivePumpAsync(socket, pumpCts.Token);
+            var completed = await Task.WhenAny(heartbeatTask, receiveTask).ConfigureAwait(false);
+            await completed.ConfigureAwait(false);
+            throw new WebSocketException("Server closed the connection.");
+        }
+        finally
+        {
+            pumpCts.Cancel();
+            if (heartbeatTask is not null && receiveTask is not null)
+            {
+                try { await Task.WhenAll(heartbeatTask, receiveTask).ConfigureAwait(false); } catch { }
+            }
+            if (ReferenceEquals(_socket, socket)) _socket = null;
+            socket.Dispose();
+        }
     }
 
-    private async Task HeartbeatPumpAsync(CancellationToken ct)
+    private async Task HeartbeatPumpAsync(ClientWebSocket socket, CancellationToken ct)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(HeartbeatIntervalMs));
         while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
         {
             var payload = _heartbeatFactory();
             payload.StationId = _stationId;
-            await SendAsync(MessageType.ClientHeartbeat, payload, AgentJsonContext.Default.AgentEnvelopeClientHeartbeatPayload, ct)
+            await SendAsync(socket, MessageType.ClientHeartbeat, payload, AgentJsonContext.Default.AgentEnvelopeClientHeartbeatPayload, ct)
                 .ConfigureAwait(false);
         }
     }
 
-    private async Task ReceivePumpAsync(CancellationToken ct)
+    private async Task ReceivePumpAsync(ClientWebSocket socket, CancellationToken ct)
     {
         var buffer = new byte[8192];
-        while (!ct.IsCancellationRequested && _socket!.State == WebSocketState.Open)
+        while (!ct.IsCancellationRequested && socket.State == WebSocketState.Open)
         {
             using var messageStream = new MemoryStream();
             WebSocketReceiveResult result;
             do
             {
-                result = await _socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
+                result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
                     throw new WebSocketException("Received Close frame from server.");
@@ -209,7 +221,12 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
                     }
                     break;
                 case MessageType.Ack:
-                    break; // reserved for future correlation/telemetry-of-telemetry
+                    var ackEnvelope = JsonSerializer.Deserialize(json, AgentJsonContext.Default.AgentEnvelopeAckPayload);
+                    if (ackEnvelope?.Payload is { Success: false, MessageId: MessageType.StationRegister } failedRegistration)
+                    {
+                        throw new WebSocketException($"Station registration rejected: {failedRegistration.Message}");
+                    }
+                    break;
 
                 default:
                     _log.Warn($"[WebSocket] Unhandled inbound message type '{header.Type}'.");
@@ -226,12 +243,12 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
     public Task SendSecurityAlertAsync(SecurityAlertPayload payload, CancellationToken ct = default)
     {
         payload.StationId = _stationId;
-        return SendAsync(MessageType.SecurityAlert, payload, AgentJsonContext.Default.AgentEnvelopeSecurityAlertPayload, ct);
+        return SendAsync(_socket, MessageType.SecurityAlert, payload, AgentJsonContext.Default.AgentEnvelopeSecurityAlertPayload, ct);
     }
 
-    private async Task SendAsync<T>(string type, T payload, JsonTypeInfo<AgentEnvelope<T>> typeInfo, CancellationToken ct)
+    private async Task SendAsync<T>(ClientWebSocket? socket, string type, T payload, JsonTypeInfo<AgentEnvelope<T>> typeInfo, CancellationToken ct)
     {
-        if (_socket is not { State: WebSocketState.Open }) return;
+        if (socket is not { State: WebSocketState.Open }) return;
 
         var envelope = new AgentEnvelope<T> { Type = type, Payload = payload };
         var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, typeInfo);
@@ -240,7 +257,8 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
             await _sendLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                await _socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+                if (socket.State != WebSocketState.Open) return;
+                await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
             }
             finally
             {
@@ -292,7 +310,7 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
     public Task SendLoginAsync(string usernameOrEmail, string password, CancellationToken ct = default)
     {
         var payload = new AuthLoginPayload { UsernameOrEmail = usernameOrEmail, Password = password };
-        return SendAsync(MessageType.AuthLogin, payload, AgentJsonContext.Default.AgentEnvelopeAuthLoginPayload, ct);
+        return SendAsync(_socket, MessageType.AuthLogin, payload, AgentJsonContext.Default.AgentEnvelopeAuthLoginPayload, ct);
     }
 
     public Task SendRegisterAsync(string username, string email, string password, CancellationToken ct = default)
@@ -304,6 +322,6 @@ public sealed class WebSocketAgentClient : IAsyncDisposable
             Password = password,
             Role = "GAMER"
         };
-        return SendAsync(MessageType.AuthRegister, payload, AgentJsonContext.Default.AgentEnvelopeAuthRegisterPayload, ct);
+        return SendAsync(_socket, MessageType.AuthRegister, payload, AgentJsonContext.Default.AgentEnvelopeAuthRegisterPayload, ct);
     }
 }

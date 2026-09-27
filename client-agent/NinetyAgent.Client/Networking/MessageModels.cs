@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace NinetyAgent.Client.Networking;
 
 public static class MessageType
@@ -57,6 +59,7 @@ public class SessionCommandPayload
     public string SessionId { get; set; } = string.Empty;
     public int DurationSeconds { get; set; }
 
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public decimal? WalletBalance { get; set; }
 }
 public class StationRegisterPayload
@@ -73,6 +76,7 @@ public class AckPayload
 {
     public string MessageId { get; set; } = string.Empty;
     public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
 }
 
 public class DiscoveredServer

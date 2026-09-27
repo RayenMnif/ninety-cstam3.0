@@ -1,12 +1,11 @@
 const fp = require('fastify-plugin');
 
-const connections = new Map();
-
 function sendEnvelope(socket, type, payload) {
 	if (socket.readyState !== 1) return false;
 
 	try {
-		socket.send(JSON.stringify({ type, payload }));
+		socket.send(JSON.stringify({ type, payload }, (_, value) =>
+			typeof value === 'bigint' ? value.toString() : value));
 		return true;
 	} catch (error) {
 		return false;
@@ -14,6 +13,7 @@ function sendEnvelope(socket, type, payload) {
 }
 
 async function websocketPlugin(fastify) {
+	const connections = new Map();
 	fastify.decorate('agentConnections', connections);
 	fastify.decorate('sendToStation', (stationId, type, payload) => {
 		const connection = connections.get(stationId);

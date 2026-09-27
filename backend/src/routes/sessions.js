@@ -24,7 +24,7 @@ async function sessionRoutes(fastify, opts) {
           return reply.code(404).send({ error: 'Wallet not found for this user' });
         }
   
-        const balance = BigInt(walletRes.rows[0].balance);
+        const balance = BigInt(walletRes.rows[0].balance_millimes);
         if (balance <= 0) {
           return reply.code(400).send({ error: 'Insufficient wallet balance to start session' });
         }
@@ -56,7 +56,7 @@ async function sessionRoutes(fastify, opts) {
         await client.query(
           `INSERT INTO session_events (session_id, type, actor, payload)
            VALUES ($1, 'SESSION_STARTED', $2, $3)`,
-          [session.id, actor, JSON.stringify({ initialBalance: balance, tariffId })]
+          [session.id, actor, JSON.stringify({ initialBalance: balance.toString(), tariffId })]
         );
   
         await client.query('COMMIT');
@@ -65,13 +65,13 @@ async function sessionRoutes(fastify, opts) {
         const delivered = fastify.sendToStation(stationId, 'SESSION_COMMAND', {
           action: 'START',
           sessionId: session.id,
-          walletBalance: balance,
+          walletBalance: balance.toString(),
         });
   
         return reply.code(201).send({
           message: 'Session started successfully',
           session,
-          walletBalance: balance,
+          walletBalance: balance.toString(),
           delivered,
         });
   
