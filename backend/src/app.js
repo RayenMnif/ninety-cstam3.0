@@ -6,18 +6,25 @@ const { AuthHandler } = require('./handlers/auth-handler');
 require('dotenv').config();
 
 async function buildApp(){
-    const app = Fastify({logger: true});
+    const app = Fastify({
+      logger: true, 
+      ajv: {
+        customOptions: {
+        keywords: ['example'], 
+        },
+      },
+    });
 
     await app.register(fastifyPostgres, {
         connectionString: process.env.DATABASE_URL, 
     });
     await app.register(fastifyRedis, {
         url: process.env.REDIS_URL,
-    });
+    })
 
     const authHandler = new AuthHandler({
-        db: app.pg,
-        logger: app.log
+      db: app.pg,
+      logger: app.log
     });
     app.decorate('authHandler', authHandler);
 
@@ -77,8 +84,8 @@ async function buildApp(){
     await app.register(require('./routes/ws'));
     await app.register(require('./routes/sessions'), { prefix: '/api/sessions' });
     await app.register(require('./routes/wallets'), {prefix: '/api/wallets'});
-    await app.register(require('./routes/stations'), {prefix: '/api'});
     await app.register(require('./routes/reservations'), {prefix: '/api/reservations'});
+    await app.register(require('./routes/stations'), {prefix: '/api'});
 
     return app;
 }

@@ -51,6 +51,7 @@ CREATE TABLE sessions(
     station_id UUID NOT NULL REFERENCES stations(id) ON DELETE RESTRICT,
     customer_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     tariff_id UUID NOT NULL REFERENCES tariffs(id),
+    reservation_id UUID  REFERENCES reservations(id),
     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK(status IN ('ACTIVE', 'PAUSED', 'PENDING', 'CLOSED', 'SETTLED', 'CANCELLED')),
     opened_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     closed_at TIMESTAMPTZ,
@@ -104,3 +105,7 @@ CREATE TABLE reservations (
 
     CONSTRAINT chk_valid_reservation_range CHECK (end_time > start_time)
 );
+
+CREATE INDEX idx_reservations_overlap 
+ON reservations (station_id, start_time, end_time) 
+WHERE status IN ('CONFIRMED', 'CHECKED_IN');
