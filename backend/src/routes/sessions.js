@@ -6,103 +6,161 @@ const {
 } = require('../schemas/sessions.schema');
 
 async function sessionRoutes(fastify, opts) {
-
   fastify.post('/start', {
     schema: startSessionSchema,
     preHandler: [fastify.authenticate],
   }, async (request, reply) => {
-    const customerId = (request.user.role === 'ADMIN' && request.body?.customerId) ? request.body.customerId : request.user.id;
+    const customerId = (request.user.role === 'ADMIN' && request.body?.customerId) 
+      ? request.body.customerId 
+      : request.user.id;
     const { stationId, tariffId } = request.body || {};
-  
+
     if (!stationId || !tariffId) {
       return reply.code(400).send({ error: 'stationId and tariffId are required' });
     }
-  
+
     const client = await fastify.pg.connect();
-  
+
     try {
+      await client.query('BEGIN');
+
+      const stationRes = await client.query(
+        `SELECT id, status FROM stations WHERE id = $1 FOR UPDATE`,
+        [stationId]
+      );
+
+      if (stationRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return reply.code(404).send({ error: 'Station not found' });
+      }
+
+      const station = stationRes.rows[0];
+      if (station.status !== 'AVAILABLE') {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({ error: `Station is not available (Status: ${station.status})` });
+      }
+
+      const activeUserSessionCheck = await client.query(
+        `SELECT id, station_id FROM sessions 
+         WHERE customer_id = $1 AND status IN ('ACTIVE', 'PAUSED') 
+         FOR UPDATE`,
+        [customerId]
+      );
       
+      if (activeUserSessionCheck.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return reply.code(409).send({ 
+          error: 'User already has an active or paused gaming session on another station' 
+        });
+      }
+
       const tariffRes = await client.query(
         `SELECT id, price_per_unit_millimes, unit_seconds, rounding_rule, minimum_charge_millimes 
          FROM tariffs WHERE id = $1`,
         [tariffId]
       );
-  
+
       if (tariffRes.rows.length === 0) {
+        await client.query('ROLLBACK');
         return reply.code(404).send({ error: 'Tariff rate not found' });
       }
-  
+
       const tariff = tariffRes.rows[0];
-      const minCharge = BigInt(tariff.minimum_charge_millimes);
+      const minCharge = BigInt(tariff.minimum_charge_millimes || 0);
       const unitPrice = BigInt(tariff.price_per_unit_millimes);
-  
+      const unitSeconds = BigInt(tariff.unit_seconds || 3600);
+
       const requiredMinimum = minCharge > 0n ? minCharge : unitPrice;
-  
+
       const walletRes = await client.query(
-        `SELECT balance_millimes FROM wallets WHERE user_id = $1`,
+        `SELECT balance_millimes FROM wallets WHERE user_id = $1 FOR UPDATE`,
         [customerId]
       );
-  
+
       if (walletRes.rows.length === 0) {
+        await client.query('ROLLBACK');
         return reply.code(404).send({ error: 'Wallet not found for this user' });
       }
-  
+
       const balance = BigInt(walletRes.rows[0].balance_millimes);
-  
+
       if (balance < requiredMinimum) {
+        await client.query('ROLLBACK');
         return reply.code(400).send({
           error: `Insufficient wallet balance. Minimum required for this tariff is ${requiredMinimum.toString()} millimes.`,
           currentBalanceMillimes: balance.toString(),
           requiredMinimumMillimes: requiredMinimum.toString(),
         });
       }
-  
-      await client.query('BEGIN');
-  
+
+      const maxPlayableSecondsBigInt = (balance * unitSeconds) / unitPrice;
+      const maxPlayableSeconds = Number(maxPlayableSecondsBigInt);
+
+      if (maxPlayableSeconds <= 0) {
+        await client.query('ROLLBACK');
+        return reply.code(400).send({ error: 'Wallet balance is too low for this tariff rate' });
+      }
+
       const sessionRes = await client.query(
         `INSERT INTO sessions (station_id, customer_id, tariff_id, status, opened_at)
          VALUES ($1, $2, $3, 'ACTIVE', CURRENT_TIMESTAMP)
          RETURNING id, station_id, customer_id, tariff_id, status, opened_at, version`,
         [stationId, customerId, tariffId]
       );
-  
+
       const session = sessionRes.rows[0];
-  
       const actor = request.user.role === 'ADMIN' ? 'ADMIN' : 'GAMER';
-      
+
       await client.query(
         `INSERT INTO session_events (session_id, type, actor, payload)
          VALUES ($1, 'SESSION_STARTED', $2, $3)`,
-        [session.id, actor, JSON.stringify({ initialBalance: balance.toString(), tariffId })]
+        [
+          session.id, 
+          actor, 
+          { 
+            initialBalanceMillimes: balance.toString(), 
+            tariffId, 
+            maxPlayableSeconds 
+          }
+        ]
       );
-  
+
       await client.query(
         `UPDATE stations SET status = 'OCCUPIED' WHERE id = $1`,
         [stationId]
       );
-  
+
       await client.query('COMMIT');
-  
+
+      await fastify.redis.set(
+        `session:expiry:${session.id}`,
+        stationId,
+        'EX',
+        maxPlayableSeconds
+      );
+
       const delivered = fastify.sendToStation(stationId, 'SESSION_COMMAND', {
         action: 'START',
         sessionId: session.id,
+        durationSeconds: maxPlayableSeconds,
         walletBalance: balance.toString(),
       });
-  
+
       return reply.code(201).send({
         message: 'Session started successfully',
         session,
+        maxPlayableSeconds,
         walletBalanceMillimes: balance.toString(),
         delivered,
       });
-  
+
     } catch (error) {
       await client.query('ROLLBACK');
-  
+
       if (error.code === '23505') {
         return reply.code(409).send({ error: 'Station already has an active session' });
       }
-  
+
       request.log.error(error);
       return reply.code(500).send({ error: 'Failed to start session due to server error' });
     } finally {

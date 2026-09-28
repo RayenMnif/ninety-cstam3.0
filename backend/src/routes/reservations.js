@@ -257,6 +257,13 @@ async function reservationRoutes(fastify, opts) {
     
         await client.query('COMMIT');
     
+        await fastify.redis.set(
+          `session:expiry:${session.id}`,
+          reservation.station_id,
+          'EX',
+          remainingSeconds
+        );
+
         const delivered = fastify.sendToStation(reservation.station_id, 'SESSION_COMMAND', {
           action: 'START',
           sessionId: session.id,
