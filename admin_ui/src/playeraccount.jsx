@@ -53,7 +53,6 @@ export const PlayerManagement = () => {
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-3xl font-black text-white capitalize font-mono tracking-tight">Player Registry</h1>
         <div className="flex items-center gap-3">
             <span className="text-zinc-500 text-xs font-mono">{players.length} Accounts Total</span>
         </div>
