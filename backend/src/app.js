@@ -78,7 +78,6 @@ async function buildApp(){
     
     await app.register(require('./plugins/websocket'));
     await app.register(require('./plugins/auth'));
-    await app.register(require('./plugins/sessionMonitor'));
     
     await app.register(require('./routes/health'), {prefix: '/api'});
     await app.register(require('./routes/auth'), {prefix: '/api/auth'});
@@ -87,6 +86,8 @@ async function buildApp(){
     await app.register(require('./routes/wallets'), {prefix: '/api/wallets'});
     await app.register(require('./routes/reservations'), {prefix: '/api/reservations'});
     await app.register(require('./routes/stations'), {prefix: '/api'});
+    await app.register(require('./routes/tariff'), {prefix: '/api/tariff'});
+    await app.register(require('./routes/adminBan'), {prefix: '/api/admin'});
 
     return app;
 }
