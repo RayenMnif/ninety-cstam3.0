@@ -46,6 +46,25 @@ CREATE TABLE tariffs(
     CONSTRAINT ROUNDING_RULE_CONSTRAINT CHECK (rounding_rule in ('UP', 'NEAREST', 'EXACT'))
 );
 
+CREATE TABLE reservations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    station_id UUID NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tariff_id UUID NOT NULL REFERENCES tariffs(id),
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    total_cost_millimes BIGINT NOT NULL CHECK (total_cost_millimes >= 0),
+    status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED' 
+        CHECK (status IN ('CONFIRMED', 'CHECKED_IN', 'EXPIRED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_valid_reservation_range CHECK (end_time > start_time)
+);
+
+CREATE INDEX idx_reservations_overlap 
+ON reservations (station_id, start_time, end_time) 
+WHERE status IN ('CONFIRMED', 'CHECKED_IN');
+
 CREATE TABLE sessions(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     station_id UUID NOT NULL REFERENCES stations(id) ON DELETE RESTRICT,
@@ -91,21 +110,3 @@ CREATE TABLE payments(
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE reservations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    station_id UUID NOT NULL REFERENCES stations(id) ON DELETE CASCADE,
-    customer_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    tariff_id UUID NOT NULL REFERENCES tariffs(id),
-    start_time TIMESTAMPTZ NOT NULL,
-    end_time TIMESTAMPTZ NOT NULL,
-    total_cost_millimes BIGINT NOT NULL CHECK (total_cost_millimes >= 0),
-    status VARCHAR(20) NOT NULL DEFAULT 'CONFIRMED' 
-        CHECK (status IN ('CONFIRMED', 'CHECKED_IN', 'EXPIRED')),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT chk_valid_reservation_range CHECK (end_time > start_time)
-);
-
-CREATE INDEX idx_reservations_overlap 
-ON reservations (station_id, start_time, end_time) 
-WHERE status IN ('CONFIRMED', 'CHECKED_IN');
