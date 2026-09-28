@@ -150,19 +150,19 @@ async function reservationRoutes(fastify, opts) {
       }
     });
   
-
     fastify.post('/:id/check-in', {
       schema: checkInReservationSchema,
       preHandler: [fastify.authenticate],
     }, async (request, reply) => {
       const reservationId = request.params.id;
       const customerId = request.user.id;
-  
+      const userRole = request.user.role;
+    
       const client = await fastify.pg.connect();
-  
+    
       try {
         await client.query('BEGIN');
-  
+    
         const resResult = await client.query(
           `SELECT id, station_id, customer_id, tariff_id, start_time, end_time, status
            FROM reservations 
@@ -170,66 +170,116 @@ async function reservationRoutes(fastify, opts) {
            FOR UPDATE`,
           [reservationId]
         );
-  
+    
         if (resResult.rows.length === 0) {
           await client.query('ROLLBACK');
           return reply.code(404).send({ error: 'Valid confirmed reservation not found' });
         }
-  
+    
         const reservation = resResult.rows[0];
-  
-        if (request.user.role !== 'ADMIN' && reservation.customer_id !== customerId) {
+    
+        if (userRole !== 'ADMIN' && reservation.customer_id !== customerId) {
           await client.query('ROLLBACK');
           return reply.code(403).send({ error: 'Forbidden: You can only check in to your own reservation' });
         }
-  
+    
+        const now = new Date();
+        const startTime = new Date(reservation.start_time);
+        const endTime = new Date(reservation.end_time);
+        const earlyCheckInWindow = new Date(startTime.getTime() - 15 * 60 * 1000); // 15 mins buffer
+    
+        if (now < earlyCheckInWindow) {
+          await client.query('ROLLBACK');
+          return reply.code(400).send({ error: 'Too early to check in for this reservation' });
+        }
+    
+        if (now >= endTime) {
+          await client.query(
+            `UPDATE reservations SET status = 'EXPIRED' WHERE id = $1`,
+            [reservationId]
+          );
+          await client.query('COMMIT');
+          return reply.code(400).send({ error: 'Reservation window has passed and is now expired' });
+        }
+    
+        const remainingSeconds = Math.max(0, Math.floor((endTime.getTime() - now.getTime()) / 1000));
+    
+        const stationRes = await client.query(
+          `SELECT id, status FROM stations WHERE id = $1 FOR UPDATE`,
+          [reservation.station_id]
+        );
+    
+        if (stationRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          return reply.code(404).send({ error: 'Assigned station not found' });
+        }
+    
+        const stationStatus = stationRes.rows[0].status;
+        if (stationStatus === 'MAINTENANCE' || stationStatus === 'OFFLINE') {
+          await client.query('ROLLBACK');
+          return reply.code(409).send({ error: `Station is currently ${stationStatus.toLowerCase()}` });
+        }
+    
         await client.query(
           `UPDATE reservations SET status = 'CHECKED_IN' WHERE id = $1`,
           [reservationId]
         );
-  
+    
         const sessionRes = await client.query(
           `INSERT INTO sessions (station_id, customer_id, tariff_id, reservation_id, status, opened_at)
            VALUES ($1, $2, $3, $4, 'ACTIVE', CURRENT_TIMESTAMP)
            RETURNING id, station_id, customer_id, tariff_id, status, opened_at, version`,
           [reservation.station_id, reservation.customer_id, reservation.tariff_id, reservationId]
         );
-  
+    
         const session = sessionRes.rows[0];
-  
+    
         await client.query(
           `UPDATE stations SET status = 'OCCUPIED' WHERE id = $1`,
           [reservation.station_id]
         );
-  
+    
+        const actor = userRole === 'ADMIN' ? 'ADMIN' : 'GAMER';
         await client.query(
           `INSERT INTO session_events (session_id, type, actor, payload)
-           VALUES ($1, 'SESSION_STARTED', 'GAMER', $2)`,
-          [session.id, JSON.stringify({ reservationId, prepaidEndTime: reservation.end_time })]
+           VALUES ($1, 'SESSION_STARTED', $2, $3)`,
+          [
+            session.id, 
+            actor, 
+            { 
+              reservationId, 
+              prepaidEndTime: reservation.end_time,
+              remainingSeconds,
+              isLateCheckIn: now > startTime
+            }
+          ]
         );
-  
+    
         await client.query('COMMIT');
-  
-        // Send WebSocket START signal to PC workstation agent
+    
         const delivered = fastify.sendToStation(reservation.station_id, 'SESSION_COMMAND', {
           action: 'START',
           sessionId: session.id,
+          durationSeconds: remainingSeconds,
           prepaidEndTime: reservation.end_time,
         });
-  
+    
         return reply.send({
-          message: 'Reservation converted to active session successfully',
+          message: now > startTime 
+            ? 'Late check-in processed. Session started with remaining time slot.' 
+            : 'Reservation converted to active session successfully',
           session,
+          remainingSeconds,
           delivered,
         });
-  
+    
       } catch (err) {
         await client.query('ROLLBACK');
         
         if (err.code === '23505') {
           return reply.code(409).send({ error: 'Station currently has an active session' });
         }
-  
+    
         request.log.error(err);
         return reply.code(500).send({ error: 'Failed to convert reservation to active session' });
       } finally {
