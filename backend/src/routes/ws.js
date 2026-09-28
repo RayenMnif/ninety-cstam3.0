@@ -1,3 +1,5 @@
+const { agentWebSocketSchema } = require('../schemas/ws.schema');
+
 const MessageType = Object.freeze({
 	Ack: 'ACK',
 	StationRegister: 'STATION_REGISTER',
@@ -27,17 +29,7 @@ function sendAck(socket, messageType, success = true, message = '') {
 async function websocketRoutes(fastify) {
 	fastify.get('/agent', {
 		websocket: true,
-		schema: {
-			summary: 'Station Agent WebSocket Handshake',
-			description: 'Establishes a real-time bi-directional WebSocket connection for desktop station kiosk agent telemetry, heartbeats, security alerts, and lock/unlock commands.',
-			tags: ['WebSocket'],
-			response: {
-				101: {
-					description: 'Switching Protocols to WebSocket connection.',
-					type: 'string',
-				},
-			},
-		},
+		schema: agentWebSocketSchema,
 	}, (socket) => {
 		let stationId = null;
 
