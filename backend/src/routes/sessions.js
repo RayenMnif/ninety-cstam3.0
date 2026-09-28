@@ -54,6 +54,42 @@ async function sessionRoutes(fastify, opts) {
         });
       }
 
+      const reservationRes = await client.query(
+        `SELECT id, start_time, end_time,
+                EXTRACT(EPOCH FROM (start_time - CURRENT_TIMESTAMP)) AS seconds_until_start
+         FROM reservations 
+         WHERE station_id = $1 
+           AND status IN ('CONFIRMED', 'CHECKED_IN', 'PENDING')
+           AND end_time > CURRENT_TIMESTAMP
+         ORDER BY start_time ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [stationId]
+      );
+  
+      let maxAllowedSecondsByReservation = Infinity;
+
+      if (reservationRes.rows.length > 0) {
+        const nextRes = reservationRes.rows[0];
+        const secondsUntilStart = Math.floor(Number(nextRes.seconds_until_start));
+  
+        if (secondsUntilStart <= 1800) { // 1800s = 30 mins
+          await client.query('ROLLBACK');
+          return reply.code(409).send({ 
+            error: 'Station is reserved for an active or upcoming reservation starting soon',
+            reservationId: nextRes.id,
+            startTime: nextRes.start_time,
+            endTime: nextRes.end_time,
+            startsInSeconds: Math.max(0, secondsUntilStart),
+          });
+        }
+        maxAllowedSecondsByReservation = secondsUntilStart - 300;
+        upcomingReservation = {
+          startTime: nextRes.start_time,
+          startsInSeconds: secondsUntilStart,
+        };
+      }
+
       const tariffRes = await client.query(
         `SELECT id, price_per_unit_millimes, unit_seconds, rounding_rule, minimum_charge_millimes 
          FROM tariffs WHERE id = $1`,
@@ -93,8 +129,10 @@ async function sessionRoutes(fastify, opts) {
         });
       }
 
-      const maxPlayableSecondsBigInt = (balance * unitSeconds) / unitPrice;
-      const maxPlayableSeconds = Number(maxPlayableSecondsBigInt);
+      const maxPlayableSecondsBigInt = Number((balance * unitSeconds) / unitPrice);
+      const maxPlayableSeconds = Math.min(maxPlayableSecondsBigInt, maxAllowedSecondsByReservation);
+
+      const isCappedByReservation = maxPlayableSeconds < maxPlayableSecondsBigInt;
 
       if (maxPlayableSeconds <= 0) {
         await client.query('ROLLBACK');
@@ -144,13 +182,22 @@ async function sessionRoutes(fastify, opts) {
         sessionId: session.id,
         durationSeconds: maxPlayableSeconds,
         walletBalance: balance.toString(),
+        isCappedByReservation,
+        upcomingReservationTime: isCappedByReservation ? upcomingReservation.startTime : null,
+        warningMessage: isCappedByReservation 
+          ? `Your session will end early due to an upcoming reservation at ${new Date(upcomingReservation.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+          : null,
       });
 
       return reply.code(201).send({
-        message: 'Session started successfully',
+        message: isCappedByReservation 
+          ? 'Session started (Capped due to upcoming reservation)' 
+          : 'Session started successfully',
         session,
         maxPlayableSeconds,
         walletBalanceMillimes: balance.toString(),
+        isCappedByReservation,
+        upcomingReservationTime: isCappedByReservation ? upcomingReservation.startTime : null,
         delivered,
       });
 
