@@ -88,7 +88,7 @@ async function buildApp(){
     await app.register(require('./routes/reservations'), {prefix: '/api/reservations'});
     await app.register(require('./routes/stations'), {prefix: '/api'});
     await app.register(require('./routes/tariff'), {prefix: '/api/tariff'});
-    // await app.register(require('./routes/adminBan'), {prefix: '/api/admin'});
+    await app.register(require('./routes/adminBan'), {prefix: '/api/admin'});
     await app.register(require('./routes/agent'), {prefix: '/api'});
 
     return app;
