@@ -1,36 +1,72 @@
 const getTariffsSchema = {
-  tags: ['tariffs'],
+  tags: ['tariff'],
   summary: 'List currently valid tariffs',
+  security: [{ bearerAuth: [] }],
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        tariffs: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              price_per_unit_millimes: { type: 'integer' },
+              unit_seconds: { type: 'integer' },
+              rounding_rule: { type: 'string' },
+              minimum_charge_millimes: { type: 'integer' },
+              valid_from: { type: 'string' },
+              valid_to: { type: 'string', nullable: true },
+            },
+          },
+        },
+      },
+    },
+  },
 };
 
 const addTariffSchema = {
-  tags: ['tariffs'],
-  summary: 'Create Standard, VIP (x2) and Night (x3) tariffs from one base price (admin)',
+  tags: ['tariff'],
+  summary: 'Add a new tariff',
   security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
-    required: ['pricePerUnitMillimes'],
-    additionalProperties: false,
+    required: ['name', 'pricePerUnitMillimes'], // 👈 Require name explicitly
     properties: {
-      pricePerUnitMillimes: { type: 'integer', minimum: 1 },
-      roundingRule: { type: 'string', enum: ['UP', 'NEAREST', 'EXACT'] },
-      minimumChargeMillimes: { type: 'integer', minimum: 0 },
+      name: { 
+        type: 'string', 
+        example: 'Standard Tariff' 
+      },
+      pricePerUnitMillimes: { type: 'integer', example: 5000 },
+      unitSeconds: { type: 'integer', default: 3600 },
+      roundingRule: { 
+        type: 'string', 
+        enum: ['UP', 'NEAREST', 'EXACT'], 
+        default: 'EXACT' 
+      },
+      minimumChargeMillimes: { type: 'integer', default: 0 },
     },
   },
 };
 
 const removeTariffSchema = {
-  tags: ['tariffs'],
-  summary: 'Deactivate Standard, VIP, and Night tariffs by base price (admin)',
+  tags: ['tariff'],
+  summary: 'Deactivate tariff by ID',
   security: [{ bearerAuth: [] }],
-  body: {
+  params: {
     type: 'object',
-    required: ['pricePerUnitMillimes'],
-    additionalProperties: false,
+    required: ['id'],
     properties: {
-      pricePerUnitMillimes: { type: 'integer', minimum: 1 },
+      id: { type: 'string', format: 'uuid' },
     },
   },
 };
 
-module.exports = { getTariffsSchema, addTariffSchema, removeTariffSchema };
+module.exports = {
+  getTariffsSchema,
+  addTariffSchema,
+  removeTariffSchema,
+};
