@@ -3,6 +3,7 @@ const {
   stopSessionSchema,
   unlockSessionSchema,
   lockSessionSchema,
+  getSessionsSchema , 
 } = require('../schemas/sessions.schema');
 
 async function sessionRoutes(fastify, opts) {
@@ -571,6 +572,76 @@ async function sessionRoutes(fastify, opts) {
         client.release();
       }
     });
+    //
+    // SESSION GET
+    //      
+    fastify.get('/', {
+    schema: getSessionsSchema,
+    preHandler: [fastify.authenticate, fastify.adminOnly],
+  }, async (request, reply) => {
+    const { 
+      status, 
+      stationId, 
+      customerId, 
+      page = 1, 
+      limit = 20 
+    } = request.query || {};
+
+    const offset = (Number(page) - 1) * Number(limit);
+
+    try {
+      const conditions = [];
+      const queryParams = [];
+
+      if (status) {
+        queryParams.push(status.toUpperCase());
+        conditions.push(`s.status = $${queryParams.length}`);
+      }
+
+      if (stationId) {
+        queryParams.push(stationId);
+        conditions.push(`s.station_id = $${queryParams.length}`);
+      }
+
+      if (customerId) {
+        queryParams.push(customerId);
+        conditions.push(`s.customer_id = $${queryParams.length}`);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+     const countQuery = `SELECT COUNT(*) AS total FROM sessions s ${whereClause}`;
+      const countRes = await fastify.pg.query(countQuery, queryParams);
+      const total = parseInt(countRes.rows[0].total, 10);
+
+      const dataQueryParams = [...queryParams, Number(limit), offset];
+      const limitIdx = queryParams.length + 1;
+      const offsetIdx = queryParams.length + 2;
+
+      const dataQuery = `
+        SELECT 
+          s.id, s.station_id, s.customer_id, s.tariff_id, s.status, s.opened_at, s.closed_at, s.version, st.hostname
+        FROM sessions s
+        LEFT JOIN stations st ON s.station_id = st.id
+        ${whereClause}
+        ORDER BY s.opened_at DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `;
+
+      const { rows } = await fastify.pg.query(dataQuery, dataQueryParams);
+
+      return reply.send({
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        sessions: rows,
+      });
+
+    } catch (error) {
+      request.log.error(error);
+      return reply.code(500).send({ error: 'Failed to fetch sessions' });
+    }
+  }); 
   }
 
   module.exports = sessionRoutes;

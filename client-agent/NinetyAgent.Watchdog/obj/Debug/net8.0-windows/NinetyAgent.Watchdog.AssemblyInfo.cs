@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("NinetyAgent.Watchdog")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+808a7cb6d90673fe8cde0c525596e96c2df1bb9b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+acfd62698b7bd817cc7849045252ebfd115d3f60")]
 [assembly: System.Reflection.AssemblyProductAttribute("NinetyAgent.Watchdog")]
 [assembly: System.Reflection.AssemblyTitleAttribute("NinetyAgent.Watchdog")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

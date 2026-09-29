@@ -160,4 +160,12 @@ public partial class App : Application
         catch { }
         Console.WriteLine(message);
     }
+    static async Task Main(string[] args)
+    {
+        var agentService = new StationAgentService();
+        await agentService.StartAsync();
+
+        // Keep process alive
+        Console.ReadLine();
+    }
 }

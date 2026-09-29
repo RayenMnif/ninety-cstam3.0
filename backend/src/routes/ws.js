@@ -34,11 +34,14 @@ async function websocketRoutes(fastify) {
 		let stationId = null;
 
 		const unregister = () => {
-			if (!stationId) return;
-			const current = fastify.agentConnections.get(stationId);
-			if (current?.socket === socket) fastify.agentConnections.delete(stationId);
-			stationId = null;
-		};
+    if (!stationId || !fastify.agentConnections) return;
+    
+    const current = fastify.agentConnections.get(stationId);
+    if (current?.socket === socket) {
+        fastify.agentConnections.delete(stationId);
+    }
+    stationId = null;
+};
 
 		socket.on('message', async (rawMessage) => {
 			let envelope;
@@ -83,30 +86,34 @@ async function websocketRoutes(fastify) {
 					break;
 
 				case MessageType.StationRegister:
-				case 'STATION_REGISTER': {
-					const stationIdVal = payload.stationId || payload.StationId;
-					if (typeof stationIdVal !== 'string' || stationIdVal.length === 0) {
-						sendAck(socket, MessageType.StationRegister, false, 'stationId is required');
-						return;
-					}
+case 'STATION_REGISTER': {
+    // 🔍 Debug log: Print exact payload received from C#
+    fastify.log.info({ rawPayload: payload }, '[WS DEBUG] STATION_REGISTER raw payload');
 
-					unregister();
-					stationId = stationIdVal;
-					const previous = fastify.agentConnections?.get(stationId);
-					if (previous?.socket !== socket) previous?.socket.close(1000, 'Replaced by new connection');
+    const sid = payload?.stationId || payload?.StationId;
+    const mac = payload?.macAddress || payload?.MacAddress || payload?.mac_address || payload?.Mac || 'UNKNOWN_MAC';
 
-					if (fastify.agentConnections) {
-						fastify.agentConnections.set(stationId, {
-							socket,
-							station: payload,
-							connectedAt: new Date().toISOString(),
-							lastHeartbeatAt: null,
-						});
-					}
-					fastify.log.info({ stationId }, 'Agent WebSocket registered');
-					sendAck(socket, MessageType.StationRegister);
-					break;
-				}
+    if (typeof sid !== 'string' || sid.length === 0) {
+        sendAck(socket, 'STATION_REGISTER', false, 'stationId is required');
+        return;
+    }
+
+    stationId = sid;
+    socket.stationId = sid;
+    socket.macAddress = mac;
+
+    if (fastify.agentConnections) {
+        fastify.agentConnections.set(sid, {
+            socket: socket,
+            hostname: payload.hostname || payload.Hostname || 'Unknown',
+            macAddress: mac
+        });
+    }
+
+    fastify.log.info({ stationId: sid, macAddress: mac }, 'Agent WebSocket registered');
+    sendAck(socket, 'STATION_REGISTER', true, 'Station registered successfully');
+    break;
+}
 
 				case MessageType.ClientHeartbeat:
 				case 'CLIENT_HEARTBEAT': {

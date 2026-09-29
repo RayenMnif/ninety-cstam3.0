@@ -241,11 +241,98 @@ const lockSessionSchema = {
       },
     },
   },
+
 };
 
+
+const getSessionsSchema = {
+  description: 'Retrieve a paginated list of all gaming sessions across the venue (Admin only)',
+  tags: ['Sessions'],
+  summary: 'Get all sessions',
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      status: {
+        type: 'string',
+        enum: ['PENDING', 'ACTIVE', 'PAUSED', 'COMPLETED', 'TERMINATED', 'CANCELLED'],
+        description: 'Filter by session status',
+      },
+      stationId: { 
+        type: 'string', 
+        format: 'uuid', 
+        description: 'Filter sessions by station UUID' 
+      },
+      customerId: { 
+        type: 'string', 
+        format: 'uuid', 
+        description: 'Filter sessions by customer UUID' 
+      },
+      page: { 
+        type: 'integer', 
+        minimum: 1, 
+        default: 1, 
+        description: 'Page number' 
+      },
+      limit: { 
+        type: 'integer', 
+        minimum: 1, 
+        maximum: 100, 
+        default: 20, 
+        description: 'Items per page' 
+      },
+    },
+  },
+    response: {
+    200: {
+      description: 'Paginated session history retrieved successfully',
+      type: 'object',
+      required: ['total', 'page', 'limit', 'sessions'],
+      properties: {
+        total: { type: 'integer', example: 42 },
+        page: { type: 'integer', example: 1 },
+        limit: { type: 'integer', example: 20 },
+        sessions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'station_id', 'customer_id', 'tariff_id', 'status', 'opened_at'],
+            properties: {
+              id: { type: 'string', format: 'uuid', example: 'd3b07384-d113-460e-4c80-411a76c09890' },
+              station_id: { type: 'string', format: 'uuid', example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' },
+              customer_id: { type: 'string', format: 'uuid', example: '7c9e6679-7425-40de-944b-e07fc1f90ae7' },
+              tariff_id: { type: 'string', format: 'uuid', example: '8f3c21a4-9e8b-4c22-11ee-321156821211' },
+              status: { type: 'string', example: 'ACTIVE' },
+              opened_at: { type: 'string', format: 'date-time', example: '2026-09-29T18:00:00.000Z' },
+              closed_at: { type: 'string', format: 'date-time', nullable: true, example: null },
+              version: { type: 'integer', example: 1 },
+              hostname: { type: 'string', nullable: true, example: 'VIP-PC-01' },
+            },
+          },
+        },
+      },
+    },
+    401: {
+      description: 'Unauthorized (Missing or invalid JWT)',
+      type: 'object',
+      properties: { error: { type: 'string', example: 'Unauthorized' } },
+    },
+    403: {
+      description: 'Forbidden (Admin role required)',
+      type: 'object',
+      properties: { error: { type: 'string', example: 'Admin privileges required' } },
+    },
+    500: {
+      description: 'Server error',
+      type: 'object',
+      properties: { error: { type: 'string', example: 'Failed to fetch sessions' } },
+    },
+  },
+};
 module.exports = {
   startSessionSchema,
   stopSessionSchema,
   unlockSessionSchema,
   lockSessionSchema,
+  getSessionsSchema,
 };

@@ -1,4 +1,4 @@
-const { stationCommandSchema } = require('../schemas/stations.schema');
+const { stationCommandSchema , getStationsSchema} = require('../schemas/stations.schema');
 
 async function stationRoutes(fastify, opts) {
     fastify.post('/:stationId/session-command', {
@@ -26,11 +26,11 @@ async function stationRoutes(fastify, opts) {
         const currentStationStatus = stationRes.rows[0].status;
     
         const sessionRes = await client.query(
-            `SELECT s.id, s.status, u.wallet_balance
+            `SELECT s.id, s.status, w.balance_millimes
             FROM sessions s
-            LEFT JOIN users u ON s.customer_id = u.id
+            INNER JOIN wallets w ON s.customer_id = w.user_id
             WHERE ${sessionId ? 's.id = $1' : 's.station_id = $1 AND s.status IN (\'ACTIVE\', \'PAUSED\')'}
-            ORDER BY s.opened_at DESC LIMIT 1 FOR UPDATE`
+            ORDER BY s.opened_at DESC LIMIT 1 FOR UPDATE`,
             [sessionId || stationId]
         );
     
@@ -80,11 +80,11 @@ async function stationRoutes(fastify, opts) {
         }
     
         if (newStationStatus !== currentStationStatus) {
-            await client.query(
-            `UPDATE stations SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-            [newStationStatus, stationId]
-            );
-        }
+    await client.query(
+    `UPDATE stations SET status = $1 WHERE id = $2`,
+    [newStationStatus, stationId]
+    );
+            }
     
         if (targetSessionId && action != 'START') {
             await client.query(
@@ -99,7 +99,7 @@ async function stationRoutes(fastify, opts) {
         const wsPayload = {
             action,
             ...(targetSessionId ? { sessionId: targetSessionId } : {}),
-            ...(activeSession?.wallet_balance !== undefined ? { walletBalance: String(activeSession.wallet_balance) } : {}),
+            ...(activeSession?.balance_millimes !== undefined ? { walletBalance: String(activeSession.balance_millimes) } : {}),
         };
     
         const delivered = fastify.sendToStation(stationId, 'SESSION_COMMAND', wsPayload);
@@ -120,6 +120,42 @@ async function stationRoutes(fastify, opts) {
         client.release();
         }
     });
+    fastify.get('/stations', {
+        schema : getStationsSchema,
+}, async (request, reply) => {
+  const { status } = request.query || {};
+
+  try {
+    let query = `
+      SELECT 
+        id, 
+        hostname, 
+        ip_address, 
+        mac_address, 
+        status 
+      FROM stations
+    `;
+    const queryParams = [];
+
+    if (status) {
+      query += ` WHERE status = $1`;
+      queryParams.push(status.toUpperCase());
+    }
+
+    query += ` ORDER BY hostname ASC`;
+
+    const { rows } = await fastify.pg.query(query, queryParams);
+
+    return reply.send({
+      count: rows.length,
+      stations: rows,
+    });
+  } catch (error) {
+    request.log.error(error);
+    return reply.code(500).send({ error: 'Failed to fetch stations' });
+  }
+});
+ 
 }
 
 module.exports = stationRoutes;
