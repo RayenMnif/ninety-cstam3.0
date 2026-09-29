@@ -43,8 +43,8 @@ async function sessionRoutes(fastify, opts) {
         // Note: unique index (idx_one_active_session_per_station) will 
         // automatically throw error 23505 if PC is already in PENDING/ACTIVE/PAUSED
         const sessionRes = await client.query(
-          `INSERT INTO sessions (station_id, customer_id, tariff_id, status, opened_at)
-           VALUES ($1, $2, $3, 'ACTIVE', CURRENT_TIMESTAMP)
+          `INSERT INTO sessions (station_id, customer_id, user_id, tariff_id, status, opened_at)
+           VALUES ($1, $2, $2, $3, 'ACTIVE', CURRENT_TIMESTAMP)
            RETURNING id, station_id, customer_id, tariff_id, status, opened_at, version`,
           [stationId, customerId, tariffId]
         );
