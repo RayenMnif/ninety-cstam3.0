@@ -5,15 +5,14 @@ const getTariffsSchema = {
 
 const addTariffSchema = {
   tags: ['tariffs'],
-  summary: 'Create a tariff (admin)',
+  summary: 'Create Standard, VIP (x2) and Night (x3) tariffs from one base price (admin)',
+  security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
-    required: ['name', 'pricePerUnitMillimes'],
+    required: ['pricePerUnitMillimes'],
     additionalProperties: false,
     properties: {
-      name: { type: 'string', minLength: 1, maxLength: 50 },
       pricePerUnitMillimes: { type: 'integer', minimum: 1 },
-      unitSeconds: { type: 'integer', minimum: 1 },
       roundingRule: { type: 'string', enum: ['UP', 'NEAREST', 'EXACT'] },
       minimumChargeMillimes: { type: 'integer', minimum: 0 },
     },
@@ -22,12 +21,15 @@ const addTariffSchema = {
 
 const removeTariffSchema = {
   tags: ['tariffs'],
-  summary: 'End a tariff (admin)',
+  summary: 'Deactivate Standard, VIP, and Night tariffs by base price (admin)',
+  security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
-    required: ['id'],
+    required: ['pricePerUnitMillimes'],
     additionalProperties: false,
-    properties: { id: { type: 'string', format: 'uuid' } },
+    properties: {
+      pricePerUnitMillimes: { type: 'integer', minimum: 1 },
+    },
   },
 };
 
