@@ -78,7 +78,7 @@ async function buildApp(){
     
     await app.register(require('./plugins/websocket'));
     await app.register(require('./plugins/auth'));
-//    await app.register(require('./plugins/sessionMonitor'));
+    await app.register(require('./plugins/sessionMonitor'));
     
     await app.register(require('./routes/health'), {prefix: '/api'});
     await app.register(require('./routes/auth'), {prefix: '/api/auth'});
