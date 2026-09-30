@@ -67,8 +67,24 @@ async function sessionRoutes(fastify, opts) {
          FOR UPDATE`,
         [stationId]
       );
+
+      const discountRes = await client.query(
+        `SELECT mt.discount_percentage
+         FROM user_subscriptions us
+         JOIN membership_tiers mt ON us.tier_id = mt.id
+         WHERE us.user_id = $1
+           AND us.status = 'ACTIVE'
+           AND us.starts_at <= CURRENT_TIMESTAMP
+           AND us.expires_at > CURRENT_TIMESTAMP
+         ORDER BY mt.discount_percentage DESC
+         LIMIT 1`,
+        [customerId]
+      );
+      
+      const discountPercentage = discountRes.rows.length > 0 ? Number(discountRes.rows[0].discount_percentage) : 0;
   
       let maxAllowedSecondsByReservation = Infinity;
+      let upcomingReservation = null;
 
       if (reservationRes.rows.length > 0) {
         const nextRes = reservationRes.rows[0];
@@ -104,10 +120,20 @@ async function sessionRoutes(fastify, opts) {
 
       const tariff = tariffRes.rows[0];
       const minCharge = BigInt(tariff.minimum_charge_millimes || 0);
+      const baseUnitPrice = BigInt(tariff.price_per_unit_millimes);
       const unitPrice = BigInt(tariff.price_per_unit_millimes);
       const unitSeconds = BigInt(tariff.unit_seconds || 3600);
 
-      const requiredMinimum = minCharge > 0n ? minCharge : unitPrice;
+      const effectiveUnitPrice = discountPercentage > 0
+      ? (baseUnitPrice * BigInt(100 - discountPercentage)) / 100n
+      : baseUnitPrice;
+
+      const effectiveMinCharge = discountPercentage > 0
+        ? (baseMinCharge * BigInt(100 - discountPercentage)) / 100n
+        : baseMinCharge;
+
+      const finalUnitPrice = effectiveUnitPrice > 0n ? effectiveUnitPrice : 1n;
+      const requiredMinimum = effectiveMinCharge > 0n ? effectiveMinCharge : finalUnitPrice;
 
       const walletRes = await client.query(
         `SELECT balance_millimes FROM wallets WHERE user_id = $1 FOR UPDATE`,
@@ -130,7 +156,7 @@ async function sessionRoutes(fastify, opts) {
         });
       }
 
-      const maxPlayableSecondsBigInt = Number((balance * unitSeconds) / unitPrice);
+      const maxPlayableSecondsBigInt = Number((balance * unitSeconds) / finalUnitPrice);
       const maxPlayableSeconds = Math.min(maxPlayableSecondsBigInt, maxAllowedSecondsByReservation);
 
       const isCappedByReservation = maxPlayableSeconds < maxPlayableSecondsBigInt;
@@ -271,6 +297,21 @@ async function sessionRoutes(fastify, opts) {
         return reply.code(403).send({ error: 'Forbidden: You can only stop your own session' });
       }
   
+      const discountRes = await client.query(
+        `SELECT mt.discount_percentage
+         FROM user_subscriptions us
+         JOIN membership_tiers mt ON us.tier_id = mt.id
+         WHERE us.user_id = $1
+           AND us.status = 'ACTIVE'
+           AND us.starts_at <= CURRENT_TIMESTAMP
+           AND us.expires_at > CURRENT_TIMESTAMP
+         ORDER BY mt.discount_percentage DESC
+         LIMIT 1`,
+        [customerId]
+      );
+      
+      const discountPercentage = discountRes.rows.length > 0 ? Number(discountRes.rows[0].discount_percentage) : 0;
+
       const openedAt = new Date(session.opened_at);
       const now = new Date();
       const elapsedSeconds = Math.max(Math.floor((now - openedAt) / 1000), 1);
@@ -303,6 +344,9 @@ async function sessionRoutes(fastify, opts) {
         }
   
         totalCostMillimes = rawCostMillimes > minimumCharge ? rawCostMillimes : minimumCharge;
+        if (discountPercentage > 0) {
+          totalCostMillimes = (totalCostMillimes * BigInt(100 - discountPercentage)) / 100n;
+        }
   
         const walletRes = await client.query(
           `UPDATE wallets 
@@ -360,6 +404,12 @@ async function sessionRoutes(fastify, opts) {
       );
   
       await client.query('COMMIT');
+
+      try {
+        await fastify.redis.del(`session:expiry:${session.id}`);
+      } catch (redisErr) {
+        fastify.log.warn(`Failed to clear Redis TTL for session ${session.id}: ${redisErr.message}`);
+      }
   
       // Send WebSocket LOCK Command
       let delivered = false;

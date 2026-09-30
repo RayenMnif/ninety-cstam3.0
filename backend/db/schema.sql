@@ -119,21 +119,10 @@ CREATE TABLE membership_tiers (
     duration_days INT NOT NULL DEFAULT 30 CHECK (duration_days > 0),
     discount_percentage INT NOT NULL DEFAULT 0 CHECK (discount_percentage >= 0 AND discount_percentage <= 100),
     valid_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    valid_to TIMESTAMP,
-);
-
-
-CREATE TABLE IF NOT EXISTS membership_tiers (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(50) NOT NULL,
-    price_millimes BIGINT NOT NULL CHECK (price_millimes >= 0),
-    duration_days INT NOT NULL DEFAULT 30 CHECK (duration_days > 0),
-    discount_percentage INT NOT NULL DEFAULT 0 CHECK (discount_percentage >= 0 AND discount_percentage <= 100),
-    valid_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     valid_to TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS user_subscriptions (
+CREATE TABLE user_subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tier_id UUID NOT NULL REFERENCES membership_tiers(id) ON DELETE RESTRICT,
@@ -143,7 +132,6 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'EXPIRED', 'CANCELLED'))
 );
 
--- 3. Create Index for Active Subscriptions
-CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active 
-ON user_subscriptions (user_id, status, expires_at) 
+CREATE UNIQUE INDEX idx_user_subscriptions_one_active_per_user 
+ON user_subscriptions (user_id) 
 WHERE status = 'ACTIVE';

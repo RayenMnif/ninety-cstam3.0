@@ -58,4 +58,68 @@ const registerAgentSchema = {
   }
 };
 
-module.exports = { registerAgentSchema };
+const agentLookupSchema = {
+  description: 'Lookup station details by MAC address or Hostname',
+  tags: ['Agent'],
+  querystring: {
+    type: 'object',
+    properties: {
+      mac: { 
+        type: 'string', 
+        description: 'MAC address of the target station agent' 
+      },
+      hostname: { 
+        type: 'string', 
+        description: 'Hostname of the PC/station' 
+      },
+    },
+    anyOf: [
+      { required: ['mac'] },
+      { required: ['hostname'] }
+    ]
+  },
+  response: {
+    200: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        station: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            hostname: { type: 'string' },
+            ip_address: { type: 'string', nullable: true },
+            mac_address: { type: 'string', nullable: true },
+            status: { type: 'string' },
+          },
+          required: ['id', 'hostname', 'status'],
+        },
+      },
+      required: ['success', 'station'],
+    },
+    400: {
+      type: 'object',
+      properties: {
+        error: { type: 'string' },
+      },
+      required: ['error'],
+    },
+    404: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+      },
+      required: ['success', 'message'],
+    },
+    500: {
+      type: 'object',
+      properties: {
+        error: { type: 'string' },
+      },
+      required: ['error'],
+    },
+  },
+};
+
+module.exports = { registerAgentSchema, agentLookupSchema };

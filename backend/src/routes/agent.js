@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { registerAgentSchema } = require('../schemas/agent.schema');
+const { registerAgentSchema, agentLookupSchema } = require('../schemas/agent.schema');
 
 async function agent(fastify, opts) {
   fastify.post('/agent/register', { schema: registerAgentSchema }, async (request, reply) => {
@@ -49,7 +49,7 @@ async function agent(fastify, opts) {
     }
   });
 
-  fastify.get('/agent/lookup', async (request, reply) => {
+  fastify.get('/agent/lookup', {schema: agentLookupSchema}, async (request, reply) => {
     const { mac, hostname } = request.query;
 
     if (!mac && !hostname) {
