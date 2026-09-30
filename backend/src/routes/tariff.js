@@ -5,7 +5,6 @@ const {
 } = require('../schemas/tariffs.schema');
 
 async function tariffRoutes(fastify, opts) {
-  // Prehandler hook: strict input validation for tariff price
   const validateTariffInput = async (request, reply) => {
     const { pricePerUnitMillimes } = request.body || {};
     const parsedPrice = Number(pricePerUnitMillimes);
@@ -26,7 +25,6 @@ async function tariffRoutes(fastify, opts) {
     }
   };
 
-  // 1. GET /api/tariff/ — List active tariffs
   fastify.get('/', {
     schema: getTariffsSchema,
     preHandler: [fastify.authenticate],
@@ -53,7 +51,6 @@ async function tariffRoutes(fastify, opts) {
     }
   });
 
-  // 2. POST /api/tariff/add — Create tariff
   fastify.post('/add', {
     schema: addTariffSchema,
     preHandler: [
@@ -63,7 +60,7 @@ async function tariffRoutes(fastify, opts) {
     ],
   }, async (request, reply) => {
     const {
-      name, // 👈 Required field received directly from request body
+      name,
       pricePerUnitMillimes,
       unitSeconds = 3600,
       roundingRule = 'EXACT',
@@ -88,7 +85,6 @@ async function tariffRoutes(fastify, opts) {
     }
   });
 
-  // 3. POST /api/tariff/remove/:id — Deactivate tariff by setting valid_to
   fastify.post('/remove/:id', {
     schema: removeTariffSchema,
     preHandler: [fastify.authenticate, fastify.adminOnly],
