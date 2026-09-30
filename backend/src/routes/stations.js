@@ -97,11 +97,12 @@ async function stationRoutes(fastify, opts) {
         await client.query('COMMIT');
     
         const wsPayload = {
-            action,
-            ...(targetSessionId ? { sessionId: targetSessionId } : {}),
-            ...(activeSession?.balance_millimes !== undefined ? { walletBalance: String(activeSession.balance_millimes) } : {}),
+            Action: action,
+            action: action,
+            ...(sessionId ? { SessionId: sessionId, sessionId: sessionId } : {}),
+            State: action === 'UNLOCK' || action === 'START' ? 'ACTIVE_SESSION' : 'LOCKED_IDLE',
+            state: action === 'UNLOCK' || action === 'START' ? 'ACTIVE_SESSION' : 'LOCKED_IDLE',
         };
-    
         const delivered = fastify.sendToStation(stationId, 'SESSION_COMMAND', wsPayload);
     
         return reply.send({
@@ -109,7 +110,7 @@ async function stationRoutes(fastify, opts) {
             stationId,
             type: 'SESSION_COMMAND',
             action,
-            stationStatus: newStationStatus,
+            stationStatus: delivered ? 'UPDATED' : 'OFFLINE',
         });
     
         } catch (error) {

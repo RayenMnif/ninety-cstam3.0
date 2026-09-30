@@ -30,24 +30,30 @@ async function websocketPlugin(fastify, opts) {
       fastify.log.info(`[WS] Station unregistered: ${stationId}`);
     }
   });
-
+  if (!fastify.hasDecorator('agentConnections')) {
+  fastify.decorate('agentConnections', new Map());
+}
   // Function called inside station.js
-  fastify.decorate('sendToStation', (stationId, type, payload) => {
-    const socket = activeStations.get(stationId);
+fastify.decorate('sendToStation', (stationId, type, payload) => {
+  const conn = fastify.agentConnections.get(stationId);
+  const targetSocket = conn?.socket;
 
-    if (!socket || socket.readyState !== 1 /* OPEN */) {
-      fastify.log.warn(`[WS] Station ${stationId} is not connected.`);
-      return false;
-    }
+  // Gestion de la comptabilité Fastify @fastify/websocket (raw WebSocket)
+  const ws = targetSocket?.socket || targetSocket;
 
-    try {
-      socket.send(JSON.stringify({ type, ...payload }));
-      return true;
-    } catch (err) {
-      fastify.log.error(`[WS] Failed to send message to ${stationId}:`, err);
-      return false;
-    }
-  });
+  if (ws && ws.readyState === 1) {
+    const envelope = {
+      type: type,
+      Type: type,
+      payload: payload,
+      Payload: payload,
+    };
+    ws.send(JSON.stringify(envelope));
+    return true; // Envoi réussi  } catch (err) {
+    fastify.log.error(`[WS] Failed to send message to ${stationId}:`, err);
+    return false;
+  }
+});
 }
 
 module.exports = fp(websocketPlugin, { name: 'agent-websocket-state' });

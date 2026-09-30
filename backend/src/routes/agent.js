@@ -1,53 +1,42 @@
+const crypto = require('crypto');
 const { registerAgentSchema } = require('../schemas/agent.schema');
 
 async function agent(fastify, opts) {
   fastify.post('/agent/register', { schema: registerAgentSchema }, async (request, reply) => {
-    const { hostname, ipAddress, macAddress } = request.body || {};
+    const { hostname, ipAddress, macAddress, stationId } = request.body || {};
 
-    if (!macAddress) {
-      return reply.code(400).send({ error: 'MAC address is required' });
-    }
-
-    const cleanMac = macAddress.replace(/[^a-fA-F0-9]/g, '').toLowerCase();
-    const formattedMac = cleanMac.match(/.{1,2}/g)?.join(':') || macAddress.toLowerCase();
+    const cleanHost = (hostname || 'UNKNOWN-PC').trim();
+    const cleanIp = ipAddress || request.ip || '127.0.0.1';
+    const cleanMac = macAddress ? macAddress.replace(/[^a-fA-F0-9]/g, '').toLowerCase() : '';
+    const formattedMac = cleanMac ? (cleanMac.match(/.{1,2}/g)?.join(':') || cleanMac) : '00:00:00:00:00:00';
+    const newStationId = (stationId && stationId.length === 36) ? stationId : crypto.randomUUID();
 
     try {
-      // 1. Search DB matching Hostname OR MAC Address
-      let res = await fastify.pg.query(
-        `SELECT id, status FROM stations 
-         WHERE LOWER(hostname) = LOWER($1)
-            OR LOWER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $2`,
-        [hostname || '', cleanMac]
+      // 1. Check if hostname exists in database
+      const existingHostRes = await fastify.pg.query(
+        'SELECT id FROM stations WHERE LOWER(hostname) = LOWER($1)',
+        [cleanHost]
       );
 
-      let station;
+      if (existingHostRes.rows.length > 0) {
+        const oldStationId = existingHostRes.rows[0].id;
 
-      if (res.rows.length > 0) {
-        station = res.rows[0];
+        // Delete associated sessions first to avoid RESTRICT foreign key error
+        await fastify.pg.query('DELETE FROM sessions WHERE station_id = $1', [oldStationId]);
 
-        // 2. Update existing station row with real MAC & IP
-        const updateRes = await fastify.pg.query(
-          `UPDATE stations 
-           SET ip_address = $1, 
-               hostname = $2, 
-               mac_address = $3,
-               status = CASE WHEN status = 'OFFLINE' THEN 'AVAILABLE' ELSE status END,
-               updated_at = NOW()
-           WHERE id = $4
-           RETURNING id, status`,
-          [ipAddress || '127.0.0.1', hostname || 'UNKNOWN-PC', formattedMac, station.id]
-        );
-        station = updateRes.rows[0];
-      } else {
-        // 3. Insert new station row if neither MAC nor Hostname matched
-        res = await fastify.pg.query(
-          `INSERT INTO stations (hostname, ip_address, mac_address, status)
-           VALUES ($1, $2, $3, 'AVAILABLE')
-           RETURNING id, status`,
-          [hostname || 'UNKNOWN-PC', ipAddress || '127.0.0.1', formattedMac]
-        );
-        station = res.rows[0];
+        // Delete the existing station row
+        await fastify.pg.query('DELETE FROM stations WHERE id = $1', [oldStationId]);
       }
+
+      // 2. Insert new station row with the new station_id
+      const insertRes = await fastify.pg.query(
+        `INSERT INTO stations (id, hostname, ip_address, mac_address, status)
+         VALUES ($1, $2, $3, $4, 'AVAILABLE')
+         RETURNING id, status`,
+        [newStationId, cleanHost, cleanIp, formattedMac]
+      );
+
+      const station = insertRes.rows[0];
 
       return reply.send({
         success: true,
@@ -60,37 +49,37 @@ async function agent(fastify, opts) {
     }
   });
 
-fastify.get('/agent/lookup', async (request, reply) => {
-  const { mac, hostname } = request.query;
+  fastify.get('/agent/lookup', async (request, reply) => {
+    const { mac, hostname } = request.query;
 
-  if (!mac && !hostname) {
-    return reply.code(400).send({ error: 'Provide either mac or hostname' });
-  }
-
-  const cleanMac = mac ? mac.replace(/[^a-fA-F0-9]/g, '').toLowerCase() : null;
-
-  try {
-    const res = await fastify.pg.query(
-      `SELECT id, hostname, ip_address, mac_address, status, updated_at 
-       FROM stations 
-       WHERE ($1::text IS NOT NULL AND LOWER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $1)
-          OR ($2::text IS NOT NULL AND LOWER(hostname) = LOWER($2))`,
-      [cleanMac, hostname || null]
-    );
-
-    if (res.rows.length === 0) {
-      return reply.code(404).send({ success: false, message: 'Station not found' });
+    if (!mac && !hostname) {
+      return reply.code(400).send({ error: 'Provide either mac or hostname' });
     }
 
-    return reply.send({
-      success: true,
-      station: res.rows[0]
-    });
-  } catch (err) {
-    fastify.log.error(err);
-    return reply.code(500).send({ error: 'Database lookup failed' });
-  }
-});
+    const cleanMac = mac ? mac.replace(/[^a-fA-F0-9]/g, '').toLowerCase() : null;
+
+    try {
+      const res = await fastify.pg.query(
+        `SELECT id, hostname, ip_address, mac_address, status 
+         FROM stations 
+         WHERE ($1::text IS NOT NULL AND LOWER(REPLACE(REPLACE(mac_address, ':', ''), '-', '')) = $1)
+            OR ($2::text IS NOT NULL AND LOWER(hostname) = LOWER($2))`,
+        [cleanMac, hostname || null]
+      );
+
+      if (res.rows.length === 0) {
+        return reply.code(404).send({ success: false, message: 'Station not found' });
+      }
+
+      return reply.send({
+        success: true,
+        station: res.rows[0]
+      });
+    } catch (err) {
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Database lookup failed' });
+    }
+  });
 }
 
 module.exports = agent;

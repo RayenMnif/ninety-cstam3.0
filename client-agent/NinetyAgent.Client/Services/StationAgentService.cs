@@ -60,13 +60,17 @@ public class StationAgentService
         {
             var macAddress = GetLocalMacAddress();
             var ipAddress = GetLocalIpAddress();
+            var hostname = Environment.MachineName;
 
-            var response = await _httpClient.PostAsJsonAsync($"{ServerBaseUrl}/api/agent/register", new
+            var payload = new
             {
-                hostname = Environment.MachineName,
+                hostname = hostname,
                 ipAddress = ipAddress,
-                macAddress = macAddress
-            });
+                macAddress = macAddress,
+                stationId = CurrentStationId // Send existing in-memory ID if present
+            };
+
+            var response = await _httpClient.PostAsJsonAsync($"{ServerBaseUrl}/api/agent/register", payload);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -77,11 +81,30 @@ public class StationAgentService
             using var jsonDoc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
             var root = jsonDoc.RootElement;
 
-            if (root.TryGetProperty("stationId", out var idElem))
+            string? assignedStationId = null;
+
+            if (root.TryGetProperty("stationId", out var idElem) ||
+                root.TryGetProperty("station_id", out idElem) ||
+                root.TryGetProperty("id", out idElem))
             {
-                return idElem.GetString();
+                assignedStationId = idElem.GetString();
+            }
+            else if (root.TryGetProperty("data", out var dataElem) &&
+                    (dataElem.TryGetProperty("stationId", out idElem) || dataElem.TryGetProperty("station_id", out idElem)))
+            {
+                assignedStationId = idElem.GetString();
             }
 
+            if (!string.IsNullOrEmpty(assignedStationId))
+            {
+                // Bind station ID in memory only
+                CurrentStationId = assignedStationId;
+
+                Console.WriteLine($"[HTTP Registration] Station ID assigned in memory: {assignedStationId}");
+                return assignedStationId;
+            }
+
+            Console.WriteLine("[HTTP Registration] Response did not contain a valid stationId.");
             return null;
         }
         catch (Exception ex)
