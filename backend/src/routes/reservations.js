@@ -46,7 +46,9 @@ async function reservationRoutes(fastify, opts) {
       schema: createReservationSchema,
       preHandler: [fastify.authenticate],
     }, async (request, reply) => {
-      const customerId = request.user.id;
+      const customerId = (request.user.role === 'ADMIN' && request.body?.customerId)
+      ? request.body.customerId
+      : request.user.id;
       const { stationId, tariffId, startTime, durationMinutes } = request.body || {};
   
       if (!stationId || !tariffId || !startTime || !durationMinutes) {
@@ -77,7 +79,22 @@ async function reservationRoutes(fastify, opts) {
           await client.query('ROLLBACK');
           return reply.code(404).send({ error: 'Tariff rate not found' });
         }
-  
+
+        const discountRes = await client.query(
+          `SELECT mt.discount_percentage
+           FROM user_subscriptions us
+           JOIN membership_tiers mt ON us.tier_id = mt.id
+           WHERE us.user_id = $1
+             AND us.status = 'ACTIVE'
+             AND us.starts_at <= CURRENT_TIMESTAMP
+             AND us.expires_at > CURRENT_TIMESTAMP
+           ORDER BY mt.discount_percentage DESC
+           LIMIT 1`,
+          [customerId]
+        );
+        
+        const discountPercentage = discountRes.rows.length > 0 ? Number(discountRes.rows[0].discount_percentage) : 0;
+
         const tariff = tariffRes.rows[0];
         const elapsedSeconds = durationMinutes * 60;
         const unitSeconds = parseInt(tariff.unit_seconds, 10) || 3600;
@@ -96,6 +113,9 @@ async function reservationRoutes(fastify, opts) {
         }
   
         const totalCostMillimes = rawCost > minCharge ? rawCost : minCharge;
+        if (discountPercentage > 0) {
+          totalCostMillimes = (totalCostMillimes * BigInt(100 - discountPercentage)) / 100n;
+        }
   
         const overlapCheck = await client.query(
           `SELECT id FROM reservations
@@ -111,7 +131,6 @@ async function reservationRoutes(fastify, opts) {
           return reply.code(409).send({ error: 'Station is already booked during this time slot' });
         }
   
-        // Upfront Wallet Deduction
         const walletRes = await client.query(
           `UPDATE wallets 
            SET balance_millimes = balance_millimes - $1,
