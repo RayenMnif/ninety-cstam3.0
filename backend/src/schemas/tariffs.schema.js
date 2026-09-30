@@ -34,7 +34,7 @@ const addTariffSchema = {
   security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
-    required: ['name', 'pricePerUnitMillimes'], // 👈 Require name explicitly
+    required: ['name', 'pricePerUnitMillimes'],
     properties: {
       name: { 
         type: 'string', 
