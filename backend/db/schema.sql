@@ -7,6 +7,8 @@ DROP TABLE IF EXISTS stations CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS session_events CASCADE;
 DROP TABLE IF EXISTS reservations CASCADE;
+DROP TABLE IF EXISTS membership_tiers;
+DROP TABLE IF EXISTS user_subscriptions ;
 
 CREATE TABLE users(
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,3 +112,38 @@ CREATE TABLE payments(
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE membership_tiers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(50) NOT NULL,
+    price_millimes BIGINT NOT NULL CHECK (price_millimes >= 0),
+    duration_days INT NOT NULL DEFAULT 30 CHECK (duration_days > 0),
+    discount_percentage INT NOT NULL DEFAULT 0 CHECK (discount_percentage >= 0 AND discount_percentage <= 100),
+    valid_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    valid_to TIMESTAMP,
+);
+
+
+CREATE TABLE IF NOT EXISTS membership_tiers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(50) NOT NULL,
+    price_millimes BIGINT NOT NULL CHECK (price_millimes >= 0),
+    duration_days INT NOT NULL DEFAULT 30 CHECK (duration_days > 0),
+    discount_percentage INT NOT NULL DEFAULT 0 CHECK (discount_percentage >= 0 AND discount_percentage <= 100),
+    valid_from TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    valid_to TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tier_id UUID NOT NULL REFERENCES membership_tiers(id) ON DELETE RESTRICT,
+    starts_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'EXPIRED', 'CANCELLED'))
+);
+
+-- 3. Create Index for Active Subscriptions
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_active 
+ON user_subscriptions (user_id, status, expires_at) 
+WHERE status = 'ACTIVE';
