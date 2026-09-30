@@ -5,20 +5,18 @@ const {
 } = require('../schemas/ban.schema');
 
 async function adminBanRoutes(fastify, opts) {
-  // POST /api/admin/ban/:id  (Ban a user)
   fastify.post('/ban/:id', {
     schema: banUserSchema,
     preHandler: [fastify.authenticate, fastify.adminOnly],
   }, async (request, reply) => {
     const { id } = request.params;
 
-    // Prevent an admin from banning themselves
     if (request.user && request.user.id === id) {
       return reply.code(400).send({ error: 'Admins cannot ban themselves' });
     }
 
     try {
-      // Query user status and role using fastify.pg database instance
+      
       const userResult = await fastify.pg.query(
         'SELECT id, role, status FROM users WHERE id = $1',
         [id]
@@ -38,7 +36,6 @@ async function adminBanRoutes(fastify, opts) {
         return reply.code(400).send({ error: 'User is already banned' });
       }
 
-      // Update the status to BANNED in database
       const updateResult = await fastify.pg.query(
         `UPDATE users
          SET status = 'BANNED'
@@ -57,7 +54,6 @@ async function adminBanRoutes(fastify, opts) {
     }
   });
 
-  // GET /api/admin/ban/ (List all banned users)
   fastify.get('/ban', {
     schema: getBannedUsersSchema,
     preHandler: [fastify.authenticate, fastify.adminOnly],
@@ -80,7 +76,6 @@ async function adminBanRoutes(fastify, opts) {
     }
   });
 
-  // 3. POST /api/admin/unban/:id (Unban a user)
   fastify.post('/unban/:id', {
     schema: unbanUserSchema,
     preHandler: [fastify.authenticate, fastify.adminOnly],
@@ -101,7 +96,6 @@ async function adminBanRoutes(fastify, opts) {
         return reply.code(400).send({ error: 'User is not currently banned' });
       }
 
-      // updatet the status to ACTIVE in database
       const updateResult = await fastify.pg.query(
         `UPDATE users
          SET status = 'ACTIVE'
